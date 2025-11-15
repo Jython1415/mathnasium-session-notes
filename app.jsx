@@ -207,7 +207,7 @@ function SessionNotesReviewerEnhanced() {
 
     // Get the review data for this index
     const review = reviews[reviewIdx];
-    const rowData = originalData[review.row_index];
+    const rowData = originalData[review.originalIndex];
 
     // Send feedback to backend
     try {

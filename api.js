@@ -93,7 +93,6 @@ class SessionNotesAPI {
       if (response.ok) {
         const data = await response.json();
         const usage = data.usage || {};
-        console.log('[DEBUG] Full usage object:', JSON.stringify(usage, null, 2));
         console.log('[CACHE] Prime complete. Tokens cached:', usage.cache_creation_input_tokens || 0);
         this.lastCachePrime = Date.now();
       } else {
@@ -182,8 +181,6 @@ class SessionNotesAPI {
 
         // Track cache stats
         const usage = data.usage || {};
-        console.log('[DEBUG] Batch', batchNum, 'usage:', JSON.stringify(usage, null, 2));
-
         const cacheHits = usage.cache_read_input_tokens || 0;
         const cacheMisses = usage.cache_creation_input_tokens || 0;
 
