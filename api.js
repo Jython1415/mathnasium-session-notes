@@ -7,8 +7,35 @@ class SessionNotesAPI {
     this.currentConcurrency = CONFIG.INITIAL_CONCURRENCY;
   }
 
-  // Convert spreadsheet data to markdown format
-  convertToMarkdownKV(data) {
+  // Generate unique 5-character lowercase alphanumeric ID (git-style)
+  generateUniqueId(existingIds) {
+    const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+    let id;
+    do {
+      id = Array.from({length: 5}, () =>
+        chars[Math.floor(Math.random() * chars.length)]
+      ).join('');
+    } while (existingIds.has(id));
+    return id;
+  }
+
+  // Assign unique IDs to all rows upfront
+  assignUniqueIds(jsonData) {
+    const existingIds = new Set();
+    return jsonData.map((row, idx) => {
+      const unique_id = this.generateUniqueId(existingIds);
+      existingIds.add(unique_id);
+      return {
+        unique_id: unique_id,
+        data: row,              // Original row data
+        originalIndex: idx,     // For looking up in originalData array
+        retryCount: 0           // Track retry attempts
+      };
+    });
+  }
+
+  // Convert enriched rows to markdown format with unique IDs
+  convertToMarkdownKV(enrichedRows) {
     const fields = [
       'Date',
       'Student Name',
@@ -23,10 +50,10 @@ class SessionNotesAPI {
       'LP Assignment'
     ];
 
-    const blocks = data.map((row, idx) => {
-      const header = `--- Row ${idx} ---`;
+    const blocks = enrichedRows.map(({unique_id, data}) => {
+      const header = `--- Row ID: ${unique_id} ---`;
       const content = fields.map(field => {
-        const value = row[field] !== undefined && row[field] !== null ? row[field] : '';
+        const value = data[field] !== undefined && data[field] !== null ? data[field] : '';
         return `${field}: ${value}`;
       }).join('\n');
       return `${header}\n${content}`;
