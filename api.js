@@ -111,12 +111,14 @@ class SessionNotesAPI {
     return cacheAge > CONFIG.CACHE_TTL_MS;
   }
 
-  // Process a single batch with retry logic
-  async processBatch(batch, batchNum, totalBatches) {
+  // Process a single batch and return results with metadata
+  async processBatch(enrichedRows, batchNum) {
     const retryWithBackoff = async (attempt = 0) => {
       try {
-        const markdownKV = this.convertToMarkdownKV(batch);
-        console.log('[BATCH] Processing batch', batchNum + 1, '/', totalBatches, '(' + batch.length, 'rows)');
+        const markdownKV = this.convertToMarkdownKV(enrichedRows);
+        const requestedIds = enrichedRows.map(r => r.unique_id);
+
+        console.log('[BATCH]', batchNum, 'Processing', enrichedRows.length, 'rows, IDs:', requestedIds.join(','));
 
         const response = await fetch(CONFIG.API_ENDPOINT, {
           method: "POST",
@@ -145,7 +147,7 @@ class SessionNotesAPI {
         if (response.status === 429) {
           if (attempt < CONFIG.MAX_RETRIES) {
             const backoffTime = Math.pow(CONFIG.RETRY_BACKOFF_BASE, attempt) * 1000 + Math.random() * CONFIG.RETRY_JITTER_MS;
-            console.warn('[RETRY] Batch', batchNum + 1, 'hit rate limit. Waiting', Math.floor(backoffTime), 'ms...');
+            console.warn('[RETRY] Batch', batchNum, 'hit rate limit. Waiting', Math.floor(backoffTime), 'ms...');
 
             // Reduce concurrency
             if (this.currentConcurrency > CONFIG.MIN_CONCURRENCY) {
@@ -180,7 +182,7 @@ class SessionNotesAPI {
 
         // Track cache stats
         const usage = data.usage || {};
-        console.log('[DEBUG] Batch', batchNum + 1, 'usage:', JSON.stringify(usage, null, 2));
+        console.log('[DEBUG] Batch', batchNum, 'usage:', JSON.stringify(usage, null, 2));
 
         const cacheHits = usage.cache_read_input_tokens || 0;
         const cacheMisses = usage.cache_creation_input_tokens || 0;
@@ -190,7 +192,7 @@ class SessionNotesAPI {
         this.cacheStats.misses += cacheMisses;
         this.cacheStats.savings += savings;
 
-        console.log('[CACHE] Batch', batchNum + 1, '- Hits:', cacheHits, '| Misses:', cacheMisses, '| Savings: $' + savings.toFixed(4));
+        console.log('[CACHE] Batch', batchNum, '- Hits:', cacheHits, '| Misses:', cacheMisses, '| Savings: $' + savings.toFixed(4));
 
         if (!data.content?.[0]?.text) {
           throw new Error('STRUCTURE_ERROR: Unexpected API response structure.');
@@ -204,14 +206,35 @@ class SessionNotesAPI {
           throw new Error('STRUCTURE_ERROR: Review data missing "reviews" array.');
         }
 
-        console.log('[SUCCESS] Batch', batchNum + 1, 'complete:', reviewData.reviews.length, 'reviews');
+        // Validate and enrich reviews with originalIndex
+        const receivedIds = new Set(reviewData.reviews.map(r => r.unique_id));
+        const enrichedReviews = reviewData.reviews.map(review => {
+          const matchingRow = enrichedRows.find(r => r.unique_id === review.unique_id);
+          if (matchingRow) {
+            review.originalIndex = matchingRow.originalIndex;
+          }
+          return review;
+        });
 
-        return reviewData.reviews;
+        // Identify missing IDs
+        const missingIds = requestedIds.filter(id => !receivedIds.has(id));
+
+        console.log('[SUCCESS] Batch', batchNum, 'complete:', enrichedReviews.length, '/', requestedIds.length, 'reviews');
+        if (missingIds.length > 0) {
+          console.warn('[WARNING] Batch', batchNum, 'missing', missingIds.length, 'IDs:', missingIds.join(','));
+        }
+
+        return {
+          reviews: enrichedReviews,
+          requestedIds: requestedIds,
+          receivedIds: Array.from(receivedIds),
+          missingIds: missingIds
+        };
 
       } catch (err) {
         if (attempt < CONFIG.MAX_RETRIES && !err.message.includes('PARSE_ERROR') && !err.message.includes('STRUCTURE_ERROR')) {
           const backoffTime = Math.pow(CONFIG.RETRY_BACKOFF_BASE, attempt) * 1000 + Math.random() * CONFIG.RETRY_JITTER_MS;
-          console.warn('[RETRY] Batch', batchNum + 1, 'failed:', err.message, '. Retrying in', Math.floor(backoffTime), 'ms...');
+          console.warn('[RETRY] Batch', batchNum, 'failed:', err.message, '. Retrying in', Math.floor(backoffTime), 'ms...');
           await new Promise(resolve => setTimeout(resolve, backoffTime));
           return retryWithBackoff(attempt + 1);
         }
@@ -222,7 +245,7 @@ class SessionNotesAPI {
     return retryWithBackoff();
   }
 
-  // Process entire file with parallel batching
+  // Process entire file with queue-based row processing
   async processFile(jsonData, progressCallback = null) {
     console.log('[PROCESS] Starting file processing for', jsonData.length, 'rows');
 
@@ -239,59 +262,109 @@ class SessionNotesAPI {
       console.log('[CACHE] Cache is fresh (' + cacheAge + 's old)');
     }
 
-    // Split into batches
-    const batches = [];
-    for (let i = 0; i < jsonData.length; i += CONFIG.BATCH_SIZE) {
-      batches.push(jsonData.slice(i, i + CONFIG.BATCH_SIZE));
-    }
-    console.log('[BATCH] Split into', batches.length, 'batches of ~' + CONFIG.BATCH_SIZE + ' rows');
+    // Assign unique IDs to all rows upfront
+    const allEnrichedRows = this.assignUniqueIds(jsonData);
+    console.log('[QUEUE] Created queue with', allEnrichedRows.length, 'rows');
 
-    // Process batches in parallel with dynamic concurrency
-    const allReviews = [];
-    let batchIndex = 0;
-    const failedBatches = [];
+    // Create row queue and tracking structures
+    const rowQueue = [...allEnrichedRows]; // Rows waiting to be processed
+    const rowMap = new Map(allEnrichedRows.map(r => [r.unique_id, r])); // ID -> enriched row
+    const completedReviews = []; // Successfully processed reviews
+    const failedRows = []; // Rows that failed after max retries
+    let batchCounter = 0;
 
-    while (batchIndex < batches.length) {
+    // Process queue until empty
+    while (rowQueue.length > 0 || failedRows.length < rowMap.size - completedReviews.length) {
       const batchesToProcess = [];
 
-      // Add new batches up to concurrency limit
-      while (batchesToProcess.length < this.currentConcurrency && batchIndex < batches.length) {
-        const currentBatchIndex = batchIndex;
-        batchesToProcess.push(this.processBatch(batches[currentBatchIndex], currentBatchIndex, batches.length));
-        batchIndex++;
+      // Create batches from queue up to concurrency limit
+      for (let i = 0; i < this.currentConcurrency && rowQueue.length > 0; i++) {
+        const batchSize = Math.min(CONFIG.BATCH_SIZE, rowQueue.length);
+        const batch = rowQueue.splice(0, batchSize);
+        batchCounter++;
+        batchesToProcess.push({
+          batchNum: batchCounter,
+          rows: batch,
+          promise: this.processBatch(batch, batchCounter)
+        });
       }
 
-      // Wait for current batch to complete
-      const results = await Promise.allSettled(batchesToProcess);
+      if (batchesToProcess.length === 0) {
+        break; // Nothing left to process
+      }
 
-      for (const result of results) {
+      // Wait for current wave of batches to complete
+      const results = await Promise.allSettled(batchesToProcess.map(b => b.promise));
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const batchInfo = batchesToProcess[i];
+
         if (result.status === 'fulfilled') {
-          allReviews.push(...result.value);
-          if (progressCallback) {
-            progressCallback(allReviews.length, jsonData.length);
+          const { reviews, missingIds } = result.value;
+
+          // Add successful reviews to completed list
+          completedReviews.push(...reviews);
+
+          // Re-queue missing rows (if under retry limit)
+          for (const id of missingIds) {
+            const row = rowMap.get(id);
+            if (row) {
+              row.retryCount++;
+              if (row.retryCount <= CONFIG.MAX_RETRIES) {
+                console.log('[RETRY] Re-queuing row', id, '(attempt', row.retryCount + 1, '/', CONFIG.MAX_RETRIES + 1, ')');
+                rowQueue.push(row);
+              } else {
+                console.error('[FAILED] Row', id, 'exceeded max retries');
+                failedRows.push(row);
+              }
+            }
           }
+
+          // Update progress
+          if (progressCallback) {
+            progressCallback(completedReviews.length + failedRows.length, allEnrichedRows.length);
+          }
+
+          // Gradually increase concurrency on success
+          if (missingIds.length === 0 && this.currentConcurrency < CONFIG.MAX_CONCURRENCY) {
+            this.currentConcurrency = Math.min(CONFIG.MAX_CONCURRENCY, this.currentConcurrency + 1);
+            console.log('[CONCURRENCY] Increased to', this.currentConcurrency);
+          }
+
         } else {
-          console.error('[ERROR] Batch failed permanently:', result.reason.message);
-          failedBatches.push(result.reason);
+          // Entire batch failed - re-queue all rows from this batch
+          console.error('[ERROR] Batch', batchInfo.batchNum, 'failed:', result.reason.message);
+
+          for (const row of batchInfo.rows) {
+            row.retryCount++;
+            if (row.retryCount <= CONFIG.MAX_RETRIES) {
+              console.log('[RETRY] Re-queuing row', row.unique_id, 'from failed batch (attempt', row.retryCount + 1, '/', CONFIG.MAX_RETRIES + 1, ')');
+              rowQueue.push(row);
+            } else {
+              console.error('[FAILED] Row', row.unique_id, 'exceeded max retries');
+              failedRows.push(row);
+            }
+          }
+
+          // Reduce concurrency on failure
+          if (this.currentConcurrency > CONFIG.MIN_CONCURRENCY) {
+            this.currentConcurrency = Math.max(CONFIG.MIN_CONCURRENCY, Math.floor(this.currentConcurrency * 0.5));
+            console.log('[CONCURRENCY] Reduced to', this.currentConcurrency);
+          }
         }
       }
-
-      // Gradually increase concurrency on success
-      if (results.every(r => r.status === 'fulfilled') && this.currentConcurrency < CONFIG.MAX_CONCURRENCY) {
-        this.currentConcurrency = Math.min(CONFIG.MAX_CONCURRENCY, this.currentConcurrency + 1);
-        console.log('[CONCURRENCY] Increased to', this.currentConcurrency);
-      }
     }
 
-    // Check if we got all reviews
-    if (failedBatches.length > 0) {
-      throw new Error('PARTIAL_FAILURE: Some batches failed to process. ' + failedBatches.length + ' batch(es) failed.');
-    }
-
-    console.log('[SUCCESS] All batches complete. Total reviews:', allReviews.length);
+    console.log('[SUCCESS] Processing complete:', completedReviews.length, 'reviews,', failedRows.length, 'failed');
     console.log('[CACHE] Session totals - Hits:', this.cacheStats.hits, '| Misses:', this.cacheStats.misses, '| Total savings: $' + this.cacheStats.savings.toFixed(4));
 
-    return allReviews;
+    return {
+      reviews: completedReviews,
+      failedRows: failedRows,
+      totalRows: allEnrichedRows.length,
+      successCount: completedReviews.length
+    };
   }
 }
 
