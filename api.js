@@ -3,7 +3,7 @@
 class SessionNotesAPI {
   constructor() {
     this.lastCachePrime = null;
-    this.cacheStats = { hits: 0, misses: 0, savings: 0 };
+    this.cacheStats = { hits: 0, misses: 0 };
     this.currentConcurrency = CONFIG.INITIAL_CONCURRENCY;
   }
 
@@ -186,13 +186,11 @@ class SessionNotesAPI {
 
         const cacheHits = usage.cache_read_input_tokens || 0;
         const cacheMisses = usage.cache_creation_input_tokens || 0;
-        const savings = (cacheHits * CONFIG.COSTS.HAIKU_INPUT - cacheHits * CONFIG.COSTS.HAIKU_CACHE_READ) / 1000000;
 
         this.cacheStats.hits += cacheHits;
         this.cacheStats.misses += cacheMisses;
-        this.cacheStats.savings += savings;
 
-        console.log('[CACHE] Batch', batchNum, '- Hits:', cacheHits, '| Misses:', cacheMisses, '| Savings: $' + savings.toFixed(4));
+        console.log('[CACHE] Batch', batchNum, '- Hits:', cacheHits, '| Misses:', cacheMisses);
 
         if (!data.content?.[0]?.text) {
           throw new Error('STRUCTURE_ERROR: Unexpected API response structure.');
@@ -206,28 +204,57 @@ class SessionNotesAPI {
           throw new Error('STRUCTURE_ERROR: Review data missing "reviews" array.');
         }
 
-        // Validate and enrich reviews with originalIndex
-        const receivedIds = new Set(reviewData.reviews.map(r => r.unique_id));
-        const enrichedReviews = reviewData.reviews.map(review => {
-          const matchingRow = enrichedRows.find(r => r.unique_id === review.unique_id);
+        // Validate: filter to only reviews matching requested IDs and remove duplicates
+        const requestedIdsSet = new Set(requestedIds);
+        const seenIds = new Set();
+        const validReviews = [];
+        const invalidIds = [];
+        const duplicateIds = [];
+
+        for (const review of reviewData.reviews) {
+          const id = review.unique_id;
+
+          // Check if this ID was requested
+          if (!requestedIdsSet.has(id)) {
+            invalidIds.push(id);
+            continue;
+          }
+
+          // Check if we've already seen this ID (duplicate)
+          if (seenIds.has(id)) {
+            duplicateIds.push(id);
+            continue;
+          }
+
+          // Valid review - enrich with originalIndex
+          const matchingRow = enrichedRows.find(r => r.unique_id === id);
           if (matchingRow) {
             review.originalIndex = matchingRow.originalIndex;
+            validReviews.push(review);
+            seenIds.add(id);
           }
-          return review;
-        });
+        }
 
         // Identify missing IDs
-        const missingIds = requestedIds.filter(id => !receivedIds.has(id));
+        const missingIds = requestedIds.filter(id => !seenIds.has(id));
 
-        console.log('[SUCCESS] Batch', batchNum, 'complete:', enrichedReviews.length, '/', requestedIds.length, 'reviews');
+        // Log warnings for invalid/duplicate IDs
+        if (invalidIds.length > 0) {
+          console.warn('[WARNING] Batch', batchNum, 'returned', invalidIds.length, 'unrequested IDs:', invalidIds.join(','));
+        }
+        if (duplicateIds.length > 0) {
+          console.warn('[WARNING] Batch', batchNum, 'returned', duplicateIds.length, 'duplicate IDs:', duplicateIds.join(','));
+        }
+
+        console.log('[SUCCESS] Batch', batchNum, 'complete:', validReviews.length, '/', requestedIds.length, 'reviews');
         if (missingIds.length > 0) {
           console.warn('[WARNING] Batch', batchNum, 'missing', missingIds.length, 'IDs:', missingIds.join(','));
         }
 
         return {
-          reviews: enrichedReviews,
+          reviews: validReviews,
           requestedIds: requestedIds,
-          receivedIds: Array.from(receivedIds),
+          receivedIds: Array.from(seenIds),
           missingIds: missingIds
         };
 
@@ -250,7 +277,7 @@ class SessionNotesAPI {
     console.log('[PROCESS] Starting file processing for', jsonData.length, 'rows');
 
     // Reset stats
-    this.cacheStats = { hits: 0, misses: 0, savings: 0 };
+    this.cacheStats = { hits: 0, misses: 0 };
 
     // Check if cache needs re-priming
     if (this.isCacheStale()) {
@@ -357,7 +384,7 @@ class SessionNotesAPI {
     }
 
     console.log('[SUCCESS] Processing complete:', completedReviews.length, 'reviews,', failedRows.length, 'failed');
-    console.log('[CACHE] Session totals - Hits:', this.cacheStats.hits, '| Misses:', this.cacheStats.misses, '| Total savings: $' + this.cacheStats.savings.toFixed(4));
+    console.log('[CACHE] Session totals - Hits:', this.cacheStats.hits, '| Misses:', this.cacheStats.misses);
 
     return {
       reviews: completedReviews,
