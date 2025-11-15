@@ -28,7 +28,8 @@ const CONFIG = {
     'behavior_no_strategy': 'Behavior Without Strategy',
     'poor_fit_suggestion': 'Poor Fit Suggestion',
     'other': 'Other',
-    'none': 'No Issues'
+    'none': 'No Issues',
+    'api_failure': 'API Review Failed'
   },
 
   // Confidence level display styles
