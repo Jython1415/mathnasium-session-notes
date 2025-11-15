@@ -211,7 +211,7 @@ function SessionNotesReviewerEnhanced() {
 
     // Send feedback to backend
     try {
-      const response = await fetch('https://mathsense.com/session-notes/api/feedback.php', {
+      const response = await fetch('api/feedback.php', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
