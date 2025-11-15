@@ -227,7 +227,7 @@ Expected structure:
 {
   "reviews": [
     {
-      "row_index": 0,
+      "unique_id": "a1b2c",
       "student_name": "First Last",
       "student_id": "1234",
       "instructor": "Instructor Name",
@@ -237,7 +237,7 @@ Expected structure:
       "justification": "Contains phrase: 'student was lazy and unfocused'"
     },
     {
-      "row_index": 1,
+      "unique_id": "d3e4f",
       "student_name": "Another Student",
       "student_id": "5678",
       "instructor": "Different Instructor",
@@ -250,7 +250,7 @@ Expected structure:
 }
 
 Field requirements:
-- row_index: Zero-based row number from input data
+- unique_id: The exact Row ID provided in the input data (e.g., "a1b2c"). Copy this exactly from the row header.
 - student_name, student_id, instructor: From the session data
 - confidence: Float from 0.0 to 1.0 representing certainty of issue
 - needs_review: Boolean (true if confidence >= 0.4, false otherwise)
@@ -265,6 +265,80 @@ CRITICAL RULES:
 5. Be consistent with confidence scoring across all reviews
 6. Your response must be parseable by JSON.parse()
 7. Never skip rows - if input has 50 rows, output must have exactly 50 reviews
+8. IMPORTANT: Copy the unique_id exactly from each row's header (e.g., "--- Row ID: a1b2c ---" means unique_id should be "a1b2c")
+9. The order of reviews in your output does not need to match the input order - the unique_id field ensures correct matching
+
+Example Input/Output Patterns:
+
+PATTERN 1 - Reviews in same order as input:
+Input:
+--- Row ID: x9y8z ---
+Student Name: Luna Martinez (1234)
+Session Summary Notes: "Emma worked on fractions today."
+
+--- Row ID: p7q6r ---
+Student Name: Lucas Martinez (5678)
+Session Summary Notes: "Lucas practiced multiplication."
+
+Output:
+{
+  "reviews": [
+    {
+      "unique_id": "x9y8z",
+      "student_name": "Luna Martinez",
+      "student_id": "1234",
+      "confidence": 0.1,
+      "needs_review": false,
+      "reason": "none",
+      "justification": "Clear, appropriate session description"
+    },
+    {
+      "unique_id": "p7q6r",
+      "student_name": "Lucas Martinez",
+      "student_id": "5678",
+      "confidence": 0.1,
+      "needs_review": false,
+      "reason": "none",
+      "justification": "Clear, appropriate session description"
+    }
+  ]
+}
+
+PATTERN 2 - Reviews in different order than input (this is acceptable):
+Input:
+--- Row ID: a1b2c ---
+Student Name: Sarah Johnson (9012)
+Session Summary Notes: "Sarah worked on algebra."
+
+--- Row ID: d3e4f ---
+Student Name: Michael Kim (3456)
+Session Summary Notes: "Michael was lazy today."
+
+Output:
+{
+  "reviews": [
+    {
+      "unique_id": "d3e4f",
+      "student_name": "Michael Kim",
+      "student_id": "3456",
+      "confidence": 0.9,
+      "needs_review": true,
+      "reason": "language_issues",
+      "justification": "Contains negative label 'lazy' without constructive framing"
+    },
+    {
+      "unique_id": "a1b2c",
+      "student_name": "Sarah Johnson",
+      "student_id": "9012",
+      "confidence": 0.1,
+      "needs_review": false,
+      "reason": "none",
+      "justification": "Clear, appropriate session description"
+    }
+  ]
+}
+
+Notice in Pattern 2: The high-confidence review (d3e4f) appears first in the output even though it was second in the input. This is perfectly acceptable because the unique_id field ensures the review is correctly matched to its input row. The output order does not matter - only that every unique_id from the input has a corresponding review in the output.
 </output_format>
 
 <additional_guidance>
@@ -410,7 +484,7 @@ Return a JSON object with a "reviews" array. Each review must include:
 {
   "reviews": [
     {
-      "row_index": 0,
+      "unique_id": "a1b2c",
       "student_name": "Name from data",
       "student_id": "ID from data",
       "instructor": "Instructor(s) from data",
@@ -423,7 +497,7 @@ Return a JSON object with a "reviews" array. Each review must include:
 }
 
 Field requirements:
-- row_index: Zero-based row number from input data
+- unique_id: The exact Row ID from the input row header (copy exactly, e.g., "a1b2c" from "--- Row ID: a1b2c ---")
 - student_name, student_id, instructor: From the session data
 - confidence: Float from 0.0 to 1.0 representing certainty of issue
 - needs_review: Boolean (true if confidence >= 0.4, false otherwise)
@@ -438,4 +512,5 @@ FINAL CHECKLIST:
 5. Be consistent with confidence scoring across all reviews
 6. Your response must be parseable by JSON.parse()
 7. Never skip rows - if input has 50 rows, output must have exactly 50 reviews
+8. Copy each unique_id exactly from the row header - this is critical for matching reviews to input rows
 </output_format>`;
