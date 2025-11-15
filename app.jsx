@@ -98,21 +98,39 @@ function SessionNotesReviewerEnhanced() {
       setTotalRows(jsonData.length);
 
       // Process via API with progress callback
-      const allReviews = await api.processFile(jsonData, (processed, total) => {
+      const result = await api.processFile(jsonData, (processed, total) => {
         setProcessedRows(processed);
       });
 
-      console.log('[SUCCESS] Received', allReviews.length, 'reviews total');
+      console.log('[SUCCESS] Received', result.reviews.length, 'reviews,', result.failedRows.length, 'failed');
+
+      // Create placeholder reviews for failed rows
+      const failedReviews = result.failedRows.map(row => ({
+        unique_id: row.unique_id,
+        originalIndex: row.originalIndex,
+        student_name: row.data['Student Name'] || 'Unknown',
+        student_id: row.data['Student Name']?.match(/\((\d+)\)$/)?.[1] || 'N/A',
+        instructor: row.data['Instructors'] || 'Unknown',
+        confidence: 1.0,
+        needs_review: true,
+        reason: 'api_failure',
+        justification: `Failed to receive AI review after ${CONFIG.MAX_RETRIES + 1} attempts. Requires manual inspection.`
+      }));
+
+      // Combine successful and failed reviews
+      const allReviews = [...result.reviews, ...failedReviews];
+      console.log('[RESULTS] Total reviews:', allReviews.length, '(', result.reviews.length, 'successful,', failedReviews.length, 'failed)');
       setReviews(allReviews);
 
       // Summary logging
       const highCount = allReviews.filter(r => r.confidence >= CONFIG.HIGH_CONFIDENCE).length;
       const mediumCount = allReviews.filter(r => r.confidence >= CONFIG.MEDIUM_CONFIDENCE && r.confidence < CONFIG.HIGH_CONFIDENCE).length;
       const lowCount = allReviews.filter(r => r.confidence < CONFIG.REVIEW_THRESHOLD).length;
+      const failedCount = failedReviews.length;
 
-      console.log('[RESULTS] High confidence:', highCount, '| Medium:', mediumCount, '| Low:', lowCount);
+      console.log('[RESULTS] High confidence:', highCount, '| Medium:', mediumCount, '| Low:', lowCount, '| Failed:', failedCount);
 
-      // Auto-expand high confidence items
+      // Auto-expand high confidence items (including failed rows)
       const highConfidenceIndices = new Set(
         allReviews
           .map((r, idx) => ({ ...r, originalIdx: idx }))
