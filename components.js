@@ -77,7 +77,7 @@ const ReviewComponents = {
         onClick: (e) => e.stopPropagation(),
         style: { marginTop: '1rem', paddingTop: '1rem', borderTop: '2px solid #fee2e2' }
       }, [
-        originalData[review.row_index]?.['Session Summary Notes'] && React.createElement('div', {
+        originalData[review.originalIndex]?.['Session Summary Notes'] && React.createElement('div', {
           key: 'summary',
           style: { marginBottom: '0.75rem' }
         }, [
@@ -105,9 +105,9 @@ const ReviewComponents = {
               fontFamily: 'Georgia, serif',
               fontStyle: 'italic'
             }
-          }, originalData[review.row_index]['Session Summary Notes'])
+          }, originalData[review.originalIndex]['Session Summary Notes'])
         ]),
-        originalData[review.row_index]?.['Internal Notes'] && React.createElement('div', {
+        originalData[review.originalIndex]?.['Internal Notes'] && React.createElement('div', {
           key: 'internal',
           style: { marginBottom: '0.75rem' }
         }, [
@@ -133,9 +133,9 @@ const ReviewComponents = {
               lineHeight: '1.6',
               color: '#1a2332'
             }
-          }, originalData[review.row_index]['Internal Notes'])
+          }, originalData[review.originalIndex]['Internal Notes'])
         ]),
-        originalData[review.row_index]?.['Schoolwork Description'] && React.createElement('div', {
+        originalData[review.originalIndex]?.['Schoolwork Description'] && React.createElement('div', {
           key: 'schoolwork',
           style: { marginBottom: '0.75rem' }
         }, [
@@ -161,7 +161,7 @@ const ReviewComponents = {
               lineHeight: '1.6',
               color: '#1a2332'
             }
-          }, originalData[review.row_index]['Schoolwork Description'])
+          }, originalData[review.originalIndex]['Schoolwork Description'])
         ]),
         React.createElement('div', {
           key: 'feedback',
@@ -263,7 +263,7 @@ const ReviewComponents = {
           key: 'justification',
           style: { color: '#1a2332', fontSize: '0.875rem', lineHeight: '1.5', marginBottom: '0.75rem' }
         }, review.justification),
-        originalData[review.row_index]?.['Session Summary Notes'] && React.createElement('div', {
+        originalData[review.originalIndex]?.['Session Summary Notes'] && React.createElement('div', {
           key: 'summary',
           style: { marginBottom: '0.75rem' }
         }, [
@@ -291,7 +291,7 @@ const ReviewComponents = {
               fontFamily: 'Georgia, serif',
               fontStyle: 'italic'
             }
-          }, originalData[review.row_index]['Session Summary Notes'])
+          }, originalData[review.originalIndex]['Session Summary Notes'])
         ]),
         React.createElement('div', {
           key: 'feedback',
