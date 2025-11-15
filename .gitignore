@@ -1,0 +1,11 @@
+# Backup files (old system)
+*.backup
+*.backup-*
+
+# System files
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
