@@ -2,7 +2,7 @@
 
 const ReviewComponents = {
   // Render high confidence review card
-  renderHighConfidenceReview: (review, originalIdx, isExpanded, originalData, toggleExpanded, getConfidenceLabel, getReasonLabel, renderFeedbackButton) => {
+  renderHighConfidenceReview: (review, originalIdx, isExpanded, originalData, toggleExpanded, getConfidenceLabel, getReasonLabel, renderFeedbackButton, handleCopyReview, isCopied) => {
     return React.createElement('div', {
       key: originalIdx,
       style: {
@@ -32,6 +32,9 @@ const ReviewComponents = {
             }, `${review.student_name} [${review.student_id}]`),
             React.createElement('div', {
               key: 'confidence',
+              title: review.confidence >= 0.7 ? 'High confidence (0.8-1.0): Clear policy violations or obvious issues' :
+                     review.confidence >= 0.4 ? 'Medium confidence (0.4-0.7): Ambiguous or borderline issues' :
+                     'Low confidence (0.0-0.3): Appropriate notes with no significant issues',
               style: {
                 backgroundColor: getConfidenceLabel(review.confidence).bg,
                 color: getConfidenceLabel(review.confidence).color,
@@ -39,7 +42,8 @@ const ReviewComponents = {
                 borderRadius: '0.25rem',
                 fontSize: '0.75rem',
                 fontWeight: '600',
-                border: `1px solid ${getConfidenceLabel(review.confidence).color}`
+                border: `1px solid ${getConfidenceLabel(review.confidence).color}`,
+                cursor: 'help'
               }
             }, `${getConfidenceLabel(review.confidence).label} Confidence`)
           ]),
@@ -49,6 +53,7 @@ const ReviewComponents = {
           }, `Instructor: ${review.instructor}`),
           React.createElement('div', {
             key: 'reason',
+            title: CONFIG.REASON_TOOLTIPS[review.reason] || review.reason,
             style: {
               display: 'inline-block',
               backgroundColor: '#fef2f2',
@@ -57,7 +62,8 @@ const ReviewComponents = {
               borderRadius: '0.25rem',
               fontSize: '0.75rem',
               fontWeight: '600',
-              marginTop: '0.5rem'
+              marginTop: '0.5rem',
+              cursor: 'help'
             }
           }, getReasonLabel(review.reason)),
           React.createElement('p', {
@@ -165,20 +171,38 @@ const ReviewComponents = {
         ]),
         React.createElement('div', {
           key: 'feedback',
+          className: 'feedback-actions',
           style: {
             display: 'flex',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             marginTop: '0.75rem',
             paddingTop: '0.75rem',
             borderTop: '1px solid #e5e7eb'
           }
-        }, renderFeedbackButton(originalIdx, true))
+        }, [
+          React.createElement('button', {
+            key: 'copy',
+            onClick: () => handleCopyReview(originalIdx),
+            style: {
+              padding: '0.25rem 0.75rem',
+              backgroundColor: isCopied ? '#65a30d' : 'transparent',
+              color: isCopied ? 'white' : '#2d8b8b',
+              border: `1px solid ${isCopied ? '#65a30d' : '#2d8b8b'}`,
+              borderRadius: '0.25rem',
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              fontWeight: '500',
+              transition: 'all 0.15s'
+            }
+          }, isCopied ? '✓ Copied' : '📋 Copy'),
+          renderFeedbackButton(originalIdx, true)
+        ])
       ])
     ]);
   },
 
   // Render low confidence review card
-  renderLowConfidenceReview: (review, originalIdx, isExpanded, originalData, toggleExpanded, getConfidenceLabel, getReasonLabel, renderFeedbackButton) => {
+  renderLowConfidenceReview: (review, originalIdx, isExpanded, originalData, toggleExpanded, getConfidenceLabel, getReasonLabel, renderFeedbackButton, handleCopyReview, isCopied) => {
     return React.createElement('div', {
       key: originalIdx,
       style: {
@@ -207,6 +231,9 @@ const ReviewComponents = {
             }, `${review.student_name} [${review.student_id}] - ${review.instructor}`),
             React.createElement('div', {
               key: 'confidence',
+              title: review.confidence >= 0.7 ? 'High confidence (0.8-1.0): Clear policy violations or obvious issues' :
+                     review.confidence >= 0.4 ? 'Medium confidence (0.4-0.7): Ambiguous or borderline issues' :
+                     'Low confidence (0.0-0.3): Appropriate notes with no significant issues',
               style: {
                 backgroundColor: getConfidenceLabel(review.confidence).bg,
                 color: getConfidenceLabel(review.confidence).color,
@@ -214,7 +241,8 @@ const ReviewComponents = {
                 borderRadius: '0.25rem',
                 fontSize: '0.75rem',
                 fontWeight: '600',
-                border: `1px solid ${getConfidenceLabel(review.confidence).color}`
+                border: `1px solid ${getConfidenceLabel(review.confidence).color}`,
+                cursor: 'help'
               }
             }, getConfidenceLabel(review.confidence).label)
           ]),
@@ -224,11 +252,13 @@ const ReviewComponents = {
           }, [
             review.reason !== 'none' && React.createElement('span', {
               key: 'reason',
+              title: CONFIG.REASON_TOOLTIPS[review.reason] || review.reason,
               style: {
                 backgroundColor: '#e2e8f0',
                 padding: '2px 6px',
                 borderRadius: '0.25rem',
-                marginRight: '0.5rem'
+                marginRight: '0.5rem',
+                cursor: 'help'
               }
             }, getReasonLabel(review.reason)),
             review.justification
@@ -248,6 +278,7 @@ const ReviewComponents = {
       }, [
         React.createElement('div', {
           key: 'reason',
+          title: CONFIG.REASON_TOOLTIPS[review.reason] || review.reason,
           style: {
             display: 'inline-block',
             backgroundColor: '#f1f5f9',
@@ -256,7 +287,8 @@ const ReviewComponents = {
             borderRadius: '0.25rem',
             fontSize: '0.75rem',
             fontWeight: '600',
-            marginBottom: '0.5rem'
+            marginBottom: '0.5rem',
+            cursor: 'help'
           }
         }, getReasonLabel(review.reason)),
         React.createElement('p', {
@@ -295,14 +327,32 @@ const ReviewComponents = {
         ]),
         React.createElement('div', {
           key: 'feedback',
+          className: 'feedback-actions',
           style: {
             display: 'flex',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             marginTop: '0.75rem',
             paddingTop: '0.75rem',
             borderTop: '1px solid #e5e7eb'
           }
-        }, renderFeedbackButton(originalIdx, false))
+        }, [
+          React.createElement('button', {
+            key: 'copy',
+            onClick: () => handleCopyReview(originalIdx),
+            style: {
+              padding: '0.25rem 0.75rem',
+              backgroundColor: isCopied ? '#65a30d' : 'transparent',
+              color: isCopied ? 'white' : '#2d8b8b',
+              border: `1px solid ${isCopied ? '#65a30d' : '#2d8b8b'}`,
+              borderRadius: '0.25rem',
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              fontWeight: '500',
+              transition: 'all 0.15s'
+            }
+          }, isCopied ? '✓ Copied' : '📋 Copy'),
+          renderFeedbackButton(originalIdx, false)
+        ])
       ])
     ]);
   }

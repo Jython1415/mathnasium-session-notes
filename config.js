@@ -32,6 +32,20 @@ const CONFIG = {
     'api_failure': 'API Review Failed'
   },
 
+  // Review reason tooltips
+  REASON_TOOLTIPS: {
+    'language_issues': 'Language negatively labels the student without constructive framing',
+    'missing_summary': 'Session Summary Notes field is completely empty',
+    'schoolwork_not_empty': 'Schoolwork Description must always be empty per policy',
+    'guardian_in_internal': 'Internal Notes contains content that should be in Session Summary',
+    'name_mismatch': 'Name used doesn\'t match student name or known nickname',
+    'behavior_no_strategy': 'Describes challenging behavior without mentioning management strategies',
+    'poor_fit_suggestion': 'Suggests learning plan or program may not be appropriate',
+    'other': 'Issue detected that doesn\'t fit standard categories',
+    'none': 'No issues detected, appropriate use of all fields',
+    'api_failure': 'Failed to receive AI review after multiple attempts'
+  },
+
   // Confidence level display styles
   CONFIDENCE_STYLES: {
     high: { label: 'High', color: '#991b1b', bg: '#fef2f2' },

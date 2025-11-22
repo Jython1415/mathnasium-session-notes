@@ -10,6 +10,75 @@
             margin: 0;
             padding: 0;
         }
+
+        /* Mobile responsiveness */
+        @media (max-width: 768px) {
+            /* Reduce padding on mobile */
+            .app-container {
+                padding: 1rem !important;
+            }
+
+            /* Make buttons stack on mobile */
+            .button-group {
+                flex-direction: column !important;
+                gap: 0.5rem !important;
+            }
+
+            /* Make section headers responsive */
+            .section-header {
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 0.75rem !important;
+            }
+
+            /* Adjust table on mobile */
+            .preview-table {
+                font-size: 0.7rem !important;
+            }
+
+            /* Make file preview more compact */
+            .preview-table th,
+            .preview-table td {
+                padding: 0.375rem !important;
+            }
+
+            /* Adjust jump to top button position on mobile */
+            .jump-to-top {
+                bottom: 1rem !important;
+                right: 1rem !important;
+                width: 2.5rem !important;
+                height: 2.5rem !important;
+            }
+
+            /* Make review cards more compact on mobile */
+            .review-card {
+                padding: 0.75rem !important;
+            }
+
+            /* Stack feedback buttons on mobile */
+            .feedback-actions {
+                flex-direction: column !important;
+                align-items: stretch !important;
+                gap: 0.5rem !important;
+            }
+
+            .feedback-actions button {
+                width: 100% !important;
+            }
+        }
+
+        @media (max-width: 480px) {
+            /* Even smaller screens */
+            .app-container {
+                padding: 0.5rem !important;
+            }
+
+            /* Hide summary notes column on very small screens */
+            .preview-table th:nth-child(3),
+            .preview-table td:nth-child(3) {
+                display: none;
+            }
+        }
     </style>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
