@@ -11,7 +11,18 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$api_key = trim(file_get_contents('/home3/c5495zvy/config/claude_api_key.txt'));
+// Try local development path first, then server path
+$local_key_path = getenv('HOME') . '/.config/claude_api_key.txt';
+$server_key_path = '/home3/c5495zvy/config/claude_api_key.txt';
+$key_path = file_exists($local_key_path) ? $local_key_path : $server_key_path;
+
+if (!file_exists($key_path)) {
+    http_response_code(500);
+    echo json_encode(['error' => 'API key file not found. Please set up your API key at ~/.config/claude_api_key.txt']);
+    exit;
+}
+
+$api_key = trim(file_get_contents($key_path));
 $request_body = file_get_contents('php://input');
 
 if (empty($request_body)) {
