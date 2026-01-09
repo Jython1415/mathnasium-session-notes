@@ -9,3 +9,25 @@
 
 # Logs
 *.log
+
+# Environment configuration
+.env
+
+# Local configuration files
+config/api_key.txt
+config/*.txt
+
+# Local data
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Private documentation
+CLAUDE.md
+
+# Claude Code settings
+.claude/settings.local.json
+
+# Sanitization scripts (temporary)
+sanitize_blobs.py
+replacements.txt

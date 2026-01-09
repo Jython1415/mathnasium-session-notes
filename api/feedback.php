@@ -12,8 +12,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Database path (outside web root for security)
-$db_path = 'data/feedback.db';
+// Load database path from environment or default path
+$db_path = getenv('FEEDBACK_DB_PATH');
+if (!$db_path) {
+    // Default to relative path for local development
+    $db_path = __DIR__ . '/../data/feedback.db';
+}
+
 $db_dir = dirname($db_path);
 
 // Create directory if it doesn't exist
