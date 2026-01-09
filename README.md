@@ -27,21 +27,10 @@ Then open http://localhost:8000/
 
 ## Usage
 
-Upload session notes as XLSX file. The app:
+Upload Mathnasium session notes from the DWP export as an XLSX file. The app:
 - Reviews notes for policy violations and quality issues
-- Flags by confidence level (high/medium/low)
+- Flags by confidence level
 - Logs feedback to SQLite database
-- Uses prompt caching for 56% cost savings
-
-## Tech Stack
-
-React 18 (CDN) • PHP 7.4+ • SQLite • Claude Haiku 4.5
-
-## Requirements
-
-- PHP 7.4+ (curl, PDO, pdo_sqlite extensions)
-- Modern web browser
-- Claude API key
 
 ## License
 
