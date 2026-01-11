@@ -33,3 +33,13 @@ CLAUDE.md
 # Sanitization scripts (temporary)
 sanitize_blobs.py
 replacements.txt
+
+# Test data (sensitive student information)
+test-data/*.xlsx
+test-data/*.xls
+
+# Test artifacts
+test-results/*.png
+test-results/*.log
+test-results/*.html
+.pytest_cache/
