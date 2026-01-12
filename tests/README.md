@@ -8,6 +8,12 @@ Automated testing for the production session-notes reviewer application. Tests t
 
 ### Prerequisites
 
+**For Server (Automated Daily Tests):**
+- No dependencies needed - uses curl only
+- Script: `scripts/smoke_test_simple.sh`
+- Tests: HTTP status, title, files, API endpoint
+
+**For Local (Full E2E Tests):**
 1. Install Playwright and dependencies:
    ```bash
    uv pip install playwright
@@ -22,15 +28,37 @@ Automated testing for the production session-notes reviewer application. Tests t
 
 ## Running Tests
 
-### Smoke Tests (Fast, ~10 seconds)
+### Server Smoke Tests (Production, ~2 seconds)
 
-Basic health checks that verify the site is up and functional:
+Simple curl-based health checks that run daily on the server:
 
 ```bash
-# Run directly
+# Run on server via SSH
+ssh -i ~/.ssh/mathsense_key c5495zvy@mathsense.com \
+  'cd ~/public_html/session-notes && ./scripts/smoke_test_simple.sh'
+
+# Or run locally (tests production)
+./scripts/smoke_test_simple.sh
+```
+
+**What it checks:**
+- Site loads (HTTP 200)
+- Application title present
+- React app file exists
+- API endpoint responds
+
+**Cost:** Free (no API calls)
+**Dependencies:** None (curl only)
+
+### Local Playwright Tests (Optional, ~10 seconds)
+
+Full browser automation tests (only needed for local development):
+
+```bash
+# Run directly (requires Playwright installed)
 uv run --script tests/test_smoke.py
 
-# Or via wrapper (same as cron job)
+# Or via wrapper
 ./scripts/run_smoke_tests.sh
 ```
 
@@ -38,9 +66,10 @@ uv run --script tests/test_smoke.py
 - Site loads (HTTP 200)
 - Application title present
 - React app loaded
-- File upload input exists
+- File upload input exists (waits for React to mount)
 
 **Cost:** Free (no API calls)
+**Dependencies:** Playwright + Chromium
 
 ### E2E Tests (Slow, ~60 seconds, ~$0.08 API cost)
 
@@ -79,21 +108,28 @@ uv run --script tests/test_e2e_full.py > test-results/e2e-$(date +%Y%m%d-%H%M%S)
 
 ## Automated Testing
 
-### Daily Smoke Tests
+### Daily Smoke Tests (Server)
 
-Cron job runs at 8 AM daily:
+Cron job runs at 8 AM CST daily on production server:
 
 ```bash
-# Edit crontab
+# On server, edit crontab
+ssh -i ~/.ssh/mathsense_key c5495zvy@mathsense.com
 crontab -e
 
 # Add this line:
-0 8 * * * /Users/Joshua/Documents/_programming/mathnasium/session-notes/scripts/run_smoke_tests.sh
+0 8 * * * cd /home2/c5495zvy/public_html/session-notes && /home2/c5495zvy/public_html/session-notes/scripts/smoke_test_simple.sh
 ```
 
-**Logs:** `test-results/smoke-test-YYYYMMDD.log`
+**Logs:** `~/public_html/session-notes/test-results/smoke-test-YYYYMMDD.log`
 
 **Retention:** Last 30 days kept automatically
+
+**Check logs via SSH:**
+```bash
+ssh -i ~/.ssh/mathsense_key c5495zvy@mathsense.com \
+  'tail -20 ~/public_html/session-notes/test-results/smoke-test-$(date +%Y%m%d).log'
+```
 
 ### Manual E2E Tests
 
