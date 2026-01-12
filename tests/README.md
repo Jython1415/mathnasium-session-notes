@@ -47,8 +47,13 @@ ssh -i ~/.ssh/mathsense_key c5495zvy@mathsense.com \
 - React app file exists
 - API endpoint responds
 
+**Alerting:**
+- Email sent to joshua.shew.mathnasium@gmail.com on test failures
+- Uses Unix `mail` command (same as mc-reporter)
+- Only alerts on failures (no spam on success)
+
 **Cost:** Free (no API calls)
-**Dependencies:** None (curl only)
+**Dependencies:** None (curl and mail only)
 
 ### Local Playwright Tests (Optional, ~10 seconds)
 

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 PRODUCTION_URL="https://mathsense.com/session-notes/"
+ERROR_EMAIL_RECIPIENT="joshua.shew.mathnasium@gmail.com"
 
 # Detect if running on server or locally
 if [[ -d "${HOME}/public_html/session-notes" ]]; then
@@ -24,6 +25,20 @@ mkdir -p "$LOG_DIR"
 # Function to log with timestamp
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Function to send email alert on failure
+send_email() {
+    local subject="$1"
+    local message="$2"
+
+    # Use mail command (available on cPanel servers)
+    if command -v mail >/dev/null 2>&1; then
+        echo "$message" | mail -s "$subject" "$ERROR_EMAIL_RECIPIENT"
+        log "Email alert sent to $ERROR_EMAIL_RECIPIENT"
+    else
+        log "WARNING: mail command not available, cannot send email alert"
+    fi
 }
 
 # Main test function
@@ -81,6 +96,23 @@ run_tests() {
         return 0
     else
         log "✗ $FAILED/4 tests FAILED"
+
+        # Send email alert on failure
+        local email_subject="[ALERT] Session Notes Smoke Test Failed"
+        local email_body="Session Notes smoke test failed on $(date '+%Y-%m-%d %H:%M:%S')
+
+Production URL: $PRODUCTION_URL
+
+Failed Tests: $FAILED/4
+
+Please check the full log for details:
+- Server: ssh c5495zvy@mathsense.com
+- Log: ~/public_html/session-notes/test-results/smoke-test-$(date +%Y%m%d).log
+- Cron log: ~/logs/session-notes-smoke-cron.log
+
+This is an automated alert from the session-notes smoke test cron job."
+
+        send_email "$email_subject" "$email_body"
         return 1
     fi
 }
