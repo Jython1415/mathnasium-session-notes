@@ -223,15 +223,26 @@ if ($op === 'full-run') {
         respond(['ok' => false, 'op' => 'full-run',
             'error' => 'shell_exec disabled — runs via cron only']);
     }
-    $script = CHECKER_DIR . '/daily_check.php';
-    $r = run_shell(PHP_BIN . ' ' . escapeshellarg($script));
-    $run = db_query('SELECT * FROM runs ORDER BY id DESC LIMIT 1')[0] ?? null;
+    $script  = CHECKER_DIR . '/daily_check.php';
+    $log_out = CHECKER_DIR . '/logs/cron.log';
+
+    // Run in background to avoid web server timeout (~75s for full batch).
+    // Returns immediately — poll ?op=status or log-query.php to see when done.
+    $cmd = 'nohup ' . PHP_BIN . ' ' . escapeshellarg($script)
+         . ' >> ' . escapeshellarg($log_out) . ' 2>&1 & echo $!';
+    $pid = trim(shell_exec($cmd) ?: '');
+
+    // Snapshot current run count so caller can detect when a new row appears
+    $run_count_before = db_query('SELECT COUNT(*) AS n FROM runs')[0]['n'] ?? 0;
+
     respond([
-        'ok'           => $r['exit_code'] === 0,
-        'op'           => 'full-run',
-        'exit_code'    => $r['exit_code'],
-        'shell_output' => $r['output'],
-        'run'          => $run,
+        'ok'                => true,
+        'op'                => 'full-run',
+        'mode'              => 'background',
+        'pid'               => $pid,
+        'run_count_before'  => $run_count_before,
+        'note'              => 'Script running in background. Poll ?op=status or log-query.php '
+                             . 'until runs.count > run_count_before to see results.',
     ]);
 }
 
