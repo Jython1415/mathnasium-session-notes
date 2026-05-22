@@ -230,12 +230,16 @@ if ($op === 'git-pull') {
 if ($op === 'deploy') {
     // Copy web-facing files from repo checkout to public_html
     $copies = [
-        REPO_DIR . '/log-query.php' => WEB_DIR . '/log-query.php',
-        REPO_DIR . '/manage.php'    => WEB_DIR . '/manage.php',
+        REPO_DIR . '/log-query.php'      => WEB_DIR . '/log-query.php',
+        REPO_DIR . '/manage.php'         => WEB_DIR . '/manage.php',
+        REPO_DIR . '/api/prompt.php'     => WEB_DIR . '/api/prompt.php',
     ];
     $results = [];
     foreach ($copies as $src => $dst) {
-        if (!file_exists($src)) { $results[$src] = 'SRC_MISSING'; continue; }
+        if (!file_exists($src)) { $results[basename($src)] = 'SRC_MISSING'; continue; }
+        // Ensure destination directory exists
+        $dst_dir = dirname($dst);
+        if (!is_dir($dst_dir)) mkdir($dst_dir, 0755, true);
         $results[basename($src)] = copy($src, $dst) ? 'OK' : 'COPY_FAILED';
     }
     respond(['ok' => !in_array('COPY_FAILED', $results), 'op' => 'deploy', 'files' => $results]);
