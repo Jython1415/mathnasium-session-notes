@@ -291,6 +291,7 @@ class HttpClient {
             CURLOPT_COOKIEFILE     => '',   // enable cookie jar in memory
             CURLOPT_COOKIEJAR      => '',
             CURLOPT_TIMEOUT        => 30,
+            CURLOPT_CONNECTTIMEOUT => 15,   // fail fast on connection hang
             CURLOPT_HEADER         => true,
         ]);
     }
