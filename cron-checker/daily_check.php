@@ -60,6 +60,7 @@ function db_open(): ?SQLite3 {
                 n_flagged     INTEGER DEFAULT 0,
                 n_failed      INTEGER DEFAULT 0,
                 model         TEXT,
+                prompt_hash   TEXT,
                 cost_usd      REAL    DEFAULT 0,
                 input_tokens  INTEGER DEFAULT 0,
                 output_tokens INTEGER DEFAULT 0,
@@ -67,6 +68,9 @@ function db_open(): ?SQLite3 {
                 error         TEXT
             )
         ');
+        // Migrate: add prompt_hash if missing (idempotent)
+        try { $db->exec('ALTER TABLE runs ADD COLUMN prompt_hash TEXT'); } catch (Exception $e) {}
+
         $db->exec('
             CREATE TABLE IF NOT EXISTS reviews (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,11 +82,14 @@ function db_open(): ?SQLite3 {
                 issue         TEXT,
                 confidence    REAL    DEFAULT 0,
                 flagged       INTEGER DEFAULT 0,
+                prompt_hash   TEXT,
                 session_notes TEXT,
                 schoolwork    TEXT,
                 justification TEXT
             )
         ');
+        // Migrate: add prompt_hash if missing (idempotent)
+        try { $db->exec('ALTER TABLE reviews ADD COLUMN prompt_hash TEXT'); } catch (Exception $e) {}
         $db->exec('CREATE INDEX IF NOT EXISTS idx_reviews_run ON reviews(run_id)');
         $db->exec('
             CREATE TABLE IF NOT EXISTS log_lines (
@@ -106,10 +113,11 @@ function db_open(): ?SQLite3 {
 function db_start_run(string $mode = 'cron'): void {
     $db = db_open();
     if (!$db) return;
-    $stmt = $db->prepare('INSERT INTO runs (ts, date, mode) VALUES (:ts, :date, :mode)');
-    $stmt->bindValue(':ts',   time(),       SQLITE3_INTEGER);
-    $stmt->bindValue(':date', date('Y-m-d'), SQLITE3_TEXT);
-    $stmt->bindValue(':mode', $mode,        SQLITE3_TEXT);
+    $stmt = $db->prepare('INSERT INTO runs (ts, date, mode, prompt_hash) VALUES (:ts, :date, :mode, :ph)');
+    $stmt->bindValue(':ts',   time(),              SQLITE3_INTEGER);
+    $stmt->bindValue(':date', date('Y-m-d'),       SQLITE3_TEXT);
+    $stmt->bindValue(':mode', $mode,               SQLITE3_TEXT);
+    $stmt->bindValue(':ph',   compute_prompt_hash(), SQLITE3_TEXT);
     $stmt->execute();
     $GLOBALS['_run_id'] = $db->lastInsertRowID();
 }
@@ -139,6 +147,28 @@ function db_finish_run(array $stats): void {
     $stmt->execute();
 }
 
+function db_retain(int $days): void {
+    $db = db_open();
+    if (!$db) return;
+    $cutoff = time() - ($days * 86400);
+    // Delete old runs and cascade via run_id
+    $old_run_ids = [];
+    $r = $db->query("SELECT id FROM runs WHERE ts < $cutoff AND mode='cron'");
+    while ($row = $r->fetchArray(SQLITE3_NUM)) $old_run_ids[] = $row[0];
+    if (empty($old_run_ids)) return;
+    $ids = implode(',', $old_run_ids);
+    $db->exec("DELETE FROM log_lines WHERE run_id IN ($ids)");
+    $db->exec("DELETE FROM reviews   WHERE run_id IN ($ids)");
+    $db->exec("DELETE FROM runs      WHERE id      IN ($ids)");
+    log_info('Retention: removed ' . count($old_run_ids) . " runs older than {$days} days");
+}
+
+function compute_prompt_hash(): string {
+    $prompt_file = SCRIPT_DIR . '/review_prompt.txt';
+    if (!file_exists($prompt_file)) return 'missing';
+    return substr(md5_file($prompt_file), 0, 8);
+}
+
 function db_insert_review(array $review, array $raw): void {
     $db = db_open();
     $rid = $GLOBALS['_run_id'];
@@ -146,10 +176,10 @@ function db_insert_review(array $review, array $raw): void {
     $stmt = $db->prepare('
         INSERT INTO reviews
             (run_id, unique_id, student_name, instructor, session_date,
-             issue, confidence, flagged, session_notes, schoolwork, justification)
+             issue, confidence, flagged, prompt_hash, session_notes, schoolwork, justification)
         VALUES
             (:run, :uid, :name, :instr, :date,
-             :issue, :conf, :flag, :notes, :school, :just)
+             :issue, :conf, :flag, :phash, :notes, :school, :just)
     ');
     $stmt->bindValue(':run',    $rid,                                 SQLITE3_INTEGER);
     $stmt->bindValue(':uid',    $review['unique_id']     ?? '',       SQLITE3_TEXT);
@@ -161,6 +191,7 @@ function db_insert_review(array $review, array $raw): void {
     $stmt->bindValue(':flag',   (int)($review['needs_review']
                                       ?? ($review['confidence'] ?? 0) >= 0.4
                                       && ($review['reason'] ?? 'none') !== 'none'), SQLITE3_INTEGER);
+    $stmt->bindValue(':phash',  compute_prompt_hash(),                SQLITE3_TEXT);
     $stmt->bindValue(':notes',  substr($raw['SessionNotes']          ?? '', 0, 2000), SQLITE3_TEXT);
     $stmt->bindValue(':school', substr($raw['SchoolworkDescription'] ?? '', 0, 500),  SQLITE3_TEXT);
     $stmt->bindValue(':just',   $review['justification'] ?? '',       SQLITE3_TEXT);
@@ -222,6 +253,7 @@ $cfg = [
     'min_confidence'    => (float)($_ENV['MIN_CONFIDENCE'] ?? 0.4),
     'batch_size'        => (int)($_ENV['BATCH_SIZE']    ?? 50),
     'log_query_key'     => $_ENV['LOG_QUERY_KEY']       ?? '',
+    'retain_days'       => (int)($_ENV['RETAIN_DAYS']    ?? 90),
 ];
 
 foreach (['radius_username', 'radius_password', 'openrouter_key'] as $req) {
@@ -919,7 +951,13 @@ $start_time = microtime(true);
 $mode = PROBE_MODE ? 'probe' : (DEBUG_MODE ? 'debug' : 'cron');
 db_start_run($mode);
 log_info('=== Session Notes Daily Check starting ===');
-log_info('Date: ' . date('Y-m-d') . ' | Model: ' . $cfg['openrouter_model'] . ' | Mode: ' . $mode);
+log_info('Date: ' . date('Y-m-d') . ' | Model: ' . $cfg['openrouter_model']
+    . ' | Mode: ' . $mode . ' | Prompt: ' . compute_prompt_hash());
+
+// Retention: prune old data on cron runs
+if ($mode === 'cron' && $cfg['retain_days'] > 0) {
+    db_retain($cfg['retain_days']);
+}
 
 try {
     // 1. Login to Radius
