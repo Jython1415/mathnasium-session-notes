@@ -737,11 +737,14 @@ function build_email_html(array $flagged, array $all_reviews, string $date_str, 
             $instr = htmlspecialchars($r['instructor']   ?? '');
             $just  = htmlspecialchars($r['justification'] ?? '');
 
-            // Show the actual session notes excerpt for context
+            // Show the actual session notes for context — no arbitrary truncation.
+            // Safety cap at 1500 chars with ellipsis in case of genuinely abnormal data.
             $raw    = $r['raw_data'] ?? [];
-            $notes  = htmlspecialchars(substr($raw['SessionNotes']  ?? '', 0, 300));
+            $raw_notes  = $raw['SessionNotes']  ?? '';
+            $raw_intern = $raw['InternalNotes'] ?? '';
+            $notes  = htmlspecialchars(strlen($raw_notes)  > 1500 ? substr($raw_notes,  0, 1500) . '…' : $raw_notes);
             $school = htmlspecialchars($raw['SchoolworkDescription'] ?? '');
-            $intern = htmlspecialchars(substr($raw['InternalNotes']  ?? '', 0, 200));
+            $intern = htmlspecialchars(strlen($raw_intern) > 1500 ? substr($raw_intern, 0, 1500) . '…' : $raw_intern);
             $date   = htmlspecialchars($raw['AttendanceDateStr']     ?? '');
 
             $rows_html .= "
