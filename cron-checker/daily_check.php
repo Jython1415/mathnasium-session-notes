@@ -121,12 +121,13 @@ function db_open(): ?SQLite3 {
     }
 }
 
-function db_start_run(string $mode = 'cron'): void {
+function db_start_run(string $mode = 'cron', string $run_date = ''): void {
     $db = db_open();
     if (!$db) return;
+    $date = $run_date ?: date('Y-m-d');
     $stmt = $db->prepare('INSERT INTO runs (ts, date, mode, prompt_hash) VALUES (:ts, :date, :mode, :ph)');
     $stmt->bindValue(':ts',   time(),              SQLITE3_INTEGER);
-    $stmt->bindValue(':date', date('Y-m-d'),       SQLITE3_TEXT);
+    $stmt->bindValue(':date', $date,               SQLITE3_TEXT);
     $stmt->bindValue(':mode', $mode,               SQLITE3_TEXT);
     $stmt->bindValue(':ph',   compute_prompt_hash(), SQLITE3_TEXT);
     $stmt->execute();
@@ -978,7 +979,7 @@ $start_time = microtime(true);
 $mode = IS_RERUN ? 'rerun' : (PROBE_MODE ? 'probe' : (DEBUG_MODE ? 'debug' : 'cron'));
 $run_date = IS_RERUN ? DATE_ARG : date('Y-m-d');
 
-db_start_run($mode);
+db_start_run($mode, $run_date);
 log_info('=== Session Notes Daily Check starting ===');
 log_info('Date: ' . $run_date . ' | Model: ' . $cfg['openrouter_model']
     . ' | Mode: ' . $mode . ' | Prompt: ' . compute_prompt_hash());
