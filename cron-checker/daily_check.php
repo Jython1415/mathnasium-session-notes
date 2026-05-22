@@ -28,6 +28,17 @@ define('DB_FILE',    SCRIPT_DIR . '/logs/sessions.sqlite');
 define('PROBE_MODE', in_array('--probe', $argv ?? []));
 define('DEBUG_MODE', in_array('--debug', $argv ?? []));
 
+// Parse optional --date=YYYY-MM-DD for historical reruns
+$_date_arg = null;
+foreach ($argv ?? [] as $_a) {
+    if (preg_match('/^--date=(\d{4}-\d{2}-\d{2})$/', $_a, $_m)) {
+        $_date_arg = $_m[1];
+        break;
+    }
+}
+define('DATE_ARG', $_date_arg);
+define('IS_RERUN', $_date_arg !== null);
+
 // Ensure log directory exists
 if (!is_dir(SCRIPT_DIR . '/logs')) {
     mkdir(SCRIPT_DIR . '/logs', 0755, true);
@@ -403,7 +414,12 @@ class RadiusSession {
         return $session;
     }
 
-    public function get_today_notes(): array {
+    public function get_notes_for_date(?string $ymd = null): array {
+        // ymd format: 'YYYY-MM-DD'. Defaults to today.
+        $fetch_date = $ymd
+            ? date('n/j/Y', strtotime($ymd))
+            : date('n/j/Y');
+
         // Fetch CSRF token from the DWP Report page
         $csrf_page_url = RADIUS_BASE . '/DigitalWorkoutPlan/Report';
         if (!isset($this->csrf_cache[$csrf_page_url])) {
@@ -413,20 +429,18 @@ class RadiusSession {
         }
         $csrf = $this->csrf_cache[$csrf_page_url];
 
-        // Use today's date for both from and to (gets all sessions for the day)
-        $today    = date('n/j/Y');
         $all_rows = [];
         $page     = 1;
         $total    = null;
 
-        log_info("Fetching DWP notes for $today (center_id={$this->center_id})");
+        log_info("Fetching DWP notes for $fetch_date (center_id={$this->center_id})");
 
         do {
             $resp = $this->http->post_form(
                 RADIUS_BASE . '/DigitalWorkoutPlan/ReportData_Read',
                 [
-                    'FromDate'         => $today . ' 12:00:00 AM',
-                    'ToDate'           => $today . ' 12:00:00 AM',
+                    'FromDate'         => $fetch_date . ' 12:00:00 AM',
+                    'ToDate'           => $fetch_date . ' 12:00:00 AM',
                     'CenterIds'        => (string)$this->center_id,
                     'VirtualCenterIds' => '',
                     'StudentId'        => '',
@@ -454,7 +468,7 @@ class RadiusSession {
 
             if ($total === null) {
                 $total = (int)($data['Total'] ?? 0);
-                log_info("DWP Total for today: $total records");
+                log_info("DWP Total for $fetch_date: $total records");
             }
 
             $rows = $data['Data'] ?? [];
@@ -465,6 +479,11 @@ class RadiusSession {
 
         log_info('Fetched ' . count($all_rows) . ' DWP records');
         return $all_rows;
+    }
+
+    // Kept for backwards compat
+    public function get_today_notes(): array {
+        return $this->get_notes_for_date();
     }
 
     private static function extract_csrf(string $html): string {
@@ -506,6 +525,9 @@ function format_row_as_markdown(array $row, string $unique_id): string {
     $cd_notes        = $row['CDNotes']            ?? '';   // center director
     $lp_assignment   = $row['LPAssignment']       ?? ($row['DwpLPAssignment'] ?? '');
 
+    $pages_completed = (string)($row['NumberOfPagesCompleted'] ?? ($row['PagesCompleted'] ?? ''));
+    $page_goal       = (string)($row['SessionPageGoal']        ?? ($row['PageGoal']       ?? ''));
+
     return implode("\n", [
         "--- Row ID: $unique_id ---",
         "Date: $date",
@@ -513,6 +535,8 @@ function format_row_as_markdown(array $row, string $unique_id): string {
         "Session Start: $start",
         "Session End: $end",
         "Instructors: $instructor",
+        "Pages Completed: $pages_completed",
+        "Session Goal (pages): $page_goal",
         "Schoolwork Description: $schoolwork",
         "Session Summary Notes: $session_notes",
         "Student Notes: $student_notes",
@@ -951,13 +975,15 @@ function load_system_prompt(): string {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 $start_time = microtime(true);
-$mode = PROBE_MODE ? 'probe' : (DEBUG_MODE ? 'debug' : 'cron');
+$mode = IS_RERUN ? 'rerun' : (PROBE_MODE ? 'probe' : (DEBUG_MODE ? 'debug' : 'cron'));
+$run_date = IS_RERUN ? DATE_ARG : date('Y-m-d');
+
 db_start_run($mode);
 log_info('=== Session Notes Daily Check starting ===');
-log_info('Date: ' . date('Y-m-d') . ' | Model: ' . $cfg['openrouter_model']
+log_info('Date: ' . $run_date . ' | Model: ' . $cfg['openrouter_model']
     . ' | Mode: ' . $mode . ' | Prompt: ' . compute_prompt_hash());
 
-// Retention: prune old data on cron runs
+// Retention: prune old data on cron runs only
 if ($mode === 'cron' && $cfg['retain_days'] > 0) {
     db_retain($cfg['retain_days']);
 }
@@ -970,8 +996,8 @@ try {
         $cfg['center_id']
     );
 
-    // 2. Fetch today's DWP notes
-    $raw_rows = $radius->get_today_notes();
+    // 2. Fetch DWP notes (today, or historical date for reruns)
+    $raw_rows = $radius->get_notes_for_date(DATE_ARG ?: null);
 
     if (PROBE_MODE) {
         // Log all raw field names from first record for verification
@@ -1043,11 +1069,14 @@ try {
     }
 
     // 7. Build and send email
-    $date_str = date('l, F j');  // e.g. "Wednesday, May 21"
-    $n_flag   = count($flagged);
-    $subject  = $n_flag > 0
-        ? "Session Notes — {$n_flag} item(s) need review ($date_str)"
-        : "Session Notes — All clear ($date_str)";
+    $date_str  = IS_RERUN
+        ? date('l, F j', strtotime(DATE_ARG))
+        : date('l, F j');
+    $n_flag    = count($flagged);
+    $prefix    = IS_RERUN ? '[RERUN ' . DATE_ARG . '] ' : '';
+    $subject   = $n_flag > 0
+        ? "{$prefix}Session Notes — {$n_flag} item(s) need review ($date_str)"
+        : "{$prefix}Session Notes — All clear ($date_str)";
 
     $html = build_email_html($flagged, $all_reviews, $date_str, $cfg['openrouter_model']);
 
