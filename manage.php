@@ -24,10 +24,13 @@ header('Cache-Control: no-store');
 set_time_limit(180);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
+// Use __DIR__ (always correct in web context) not $_SERVER['HOME'] (CLI only).
+// manage.php lives at public_html/session-notes/ → two levels up is the home dir.
 
-define('REPO_DIR',    $_SERVER['HOME'] . '/session-notes-checker');
+define('HOME_DIR',    dirname(dirname(__DIR__)));
+define('REPO_DIR',    HOME_DIR . '/session-notes-checker');
 define('CHECKER_DIR', REPO_DIR . '/cron-checker');
-define('WEB_DIR',     $_SERVER['HOME'] . '/public_html/session-notes');
+define('WEB_DIR',     __DIR__);
 define('DB_PATH',     CHECKER_DIR . '/logs/sessions.sqlite');
 define('ENV_PATH',    CHECKER_DIR . '/.env');
 define('PHP_BIN',     '/usr/local/bin/ea-php83');
