@@ -1016,6 +1016,9 @@ try {
         $elapsed = round(microtime(true) - $start_time, 1);
         db_finish_run(['n_sessions' => count($all_reviews), 'n_flagged' => count($flagged),
                        'n_failed' => $n_failed, 'model' => $cfg['openrouter_model'],
+                       'cost_usd' => $GLOBALS['_usage']['cost_usd'],
+                       'input_tokens' => $GLOBALS['_usage']['input_tokens'],
+                       'output_tokens' => $GLOBALS['_usage']['output_tokens'],
                        'elapsed_s' => $elapsed]);
         log_info("Done in {$elapsed}s.");
         exit(0);
