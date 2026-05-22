@@ -24,6 +24,7 @@
 
 define('SCRIPT_DIR', __DIR__);
 define('LOG_FILE',   SCRIPT_DIR . '/logs/daily_check.log');
+define('DB_FILE',    SCRIPT_DIR . '/logs/sessions.sqlite');
 define('PROBE_MODE', in_array('--probe', $argv ?? []));
 define('DEBUG_MODE', in_array('--debug', $argv ?? []));
 
@@ -32,10 +33,156 @@ if (!is_dir(SCRIPT_DIR . '/logs')) {
     mkdir(SCRIPT_DIR . '/logs', 0755, true);
 }
 
+// ─── SQLite logging ───────────────────────────────────────────────────────────
+// All run data is written to sessions.sqlite so Claude sessions can query it
+// directly via the log-query.php endpoint without needing SSH/filesystem access.
+
+$GLOBALS['_db']     = null;   // SQLite3 instance
+$GLOBALS['_run_id'] = null;   // current run's PK
+$GLOBALS['_usage']  = ['input_tokens' => 0, 'output_tokens' => 0, 'cost_usd' => 0.0];
+
+function db_open(): ?SQLite3 {
+    if ($GLOBALS['_db'] !== null) return $GLOBALS['_db'];
+    if (!class_exists('SQLite3')) return null;
+    try {
+        $db = new SQLite3(DB_FILE, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
+        $db->enableExceptions(true);
+        $db->exec('PRAGMA journal_mode=WAL');
+        $db->exec('PRAGMA synchronous=NORMAL');
+        $db->exec('PRAGMA busy_timeout=5000');
+        $db->exec('
+            CREATE TABLE IF NOT EXISTS runs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts            INTEGER NOT NULL,
+                date          TEXT    NOT NULL,
+                mode          TEXT    NOT NULL DEFAULT "cron",
+                n_sessions    INTEGER DEFAULT 0,
+                n_flagged     INTEGER DEFAULT 0,
+                n_failed      INTEGER DEFAULT 0,
+                model         TEXT,
+                cost_usd      REAL    DEFAULT 0,
+                input_tokens  INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                elapsed_s     REAL    DEFAULT 0,
+                error         TEXT
+            )
+        ');
+        $db->exec('
+            CREATE TABLE IF NOT EXISTS reviews (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id        INTEGER NOT NULL,
+                unique_id     TEXT,
+                student_name  TEXT,
+                instructor    TEXT,
+                session_date  TEXT,
+                issue         TEXT,
+                confidence    REAL    DEFAULT 0,
+                flagged       INTEGER DEFAULT 0,
+                session_notes TEXT,
+                schoolwork    TEXT,
+                justification TEXT
+            )
+        ');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_reviews_run ON reviews(run_id)');
+        $db->exec('
+            CREATE TABLE IF NOT EXISTS log_lines (
+                id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER,
+                ts     INTEGER NOT NULL,
+                level  TEXT    NOT NULL,
+                msg    TEXT    NOT NULL
+            )
+        ');
+        $db->exec('CREATE INDEX IF NOT EXISTS idx_log_run ON log_lines(run_id)');
+        $GLOBALS['_db'] = $db;
+        return $db;
+    } catch (Exception $e) {
+        // SQLite failure is non-fatal — flat log still works
+        error_log('sessions.sqlite open failed: ' . $e->getMessage());
+        return null;
+    }
+}
+
+function db_start_run(string $mode = 'cron'): void {
+    $db = db_open();
+    if (!$db) return;
+    $stmt = $db->prepare('INSERT INTO runs (ts, date, mode) VALUES (:ts, :date, :mode)');
+    $stmt->bindValue(':ts',   time(),       SQLITE3_INTEGER);
+    $stmt->bindValue(':date', date('Y-m-d'), SQLITE3_TEXT);
+    $stmt->bindValue(':mode', $mode,        SQLITE3_TEXT);
+    $stmt->execute();
+    $GLOBALS['_run_id'] = $db->lastInsertRowID();
+}
+
+function db_finish_run(array $stats): void {
+    $db = db_open();
+    $rid = $GLOBALS['_run_id'];
+    if (!$db || !$rid) return;
+    $stmt = $db->prepare('
+        UPDATE runs SET
+            n_sessions=:ns, n_flagged=:nf, n_failed=:nx,
+            model=:model, cost_usd=:cost,
+            input_tokens=:in, output_tokens=:out,
+            elapsed_s=:el, error=:err
+        WHERE id=:id
+    ');
+    $stmt->bindValue(':ns',    $stats['n_sessions']    ?? 0,    SQLITE3_INTEGER);
+    $stmt->bindValue(':nf',    $stats['n_flagged']     ?? 0,    SQLITE3_INTEGER);
+    $stmt->bindValue(':nx',    $stats['n_failed']      ?? 0,    SQLITE3_INTEGER);
+    $stmt->bindValue(':model', $stats['model']         ?? '',   SQLITE3_TEXT);
+    $stmt->bindValue(':cost',  $stats['cost_usd']      ?? 0.0,  SQLITE3_FLOAT);
+    $stmt->bindValue(':in',    $stats['input_tokens']  ?? 0,    SQLITE3_INTEGER);
+    $stmt->bindValue(':out',   $stats['output_tokens'] ?? 0,    SQLITE3_INTEGER);
+    $stmt->bindValue(':el',    $stats['elapsed_s']     ?? 0.0,  SQLITE3_FLOAT);
+    $stmt->bindValue(':err',   $stats['error']         ?? null, SQLITE3_TEXT);
+    $stmt->bindValue(':id',    $rid,                            SQLITE3_INTEGER);
+    $stmt->execute();
+}
+
+function db_insert_review(array $review, array $raw): void {
+    $db = db_open();
+    $rid = $GLOBALS['_run_id'];
+    if (!$db || !$rid) return;
+    $stmt = $db->prepare('
+        INSERT INTO reviews
+            (run_id, unique_id, student_name, instructor, session_date,
+             issue, confidence, flagged, session_notes, schoolwork, justification)
+        VALUES
+            (:run, :uid, :name, :instr, :date,
+             :issue, :conf, :flag, :notes, :school, :just)
+    ');
+    $stmt->bindValue(':run',    $rid,                                 SQLITE3_INTEGER);
+    $stmt->bindValue(':uid',    $review['unique_id']     ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':name',   $review['student_name']  ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':instr',  $review['instructor']    ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':date',   $raw['AttendanceDateStr'] ?? '',      SQLITE3_TEXT);
+    $stmt->bindValue(':issue',  $review['reason']        ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':conf',   (float)($review['confidence'] ?? 0), SQLITE3_FLOAT);
+    $stmt->bindValue(':flag',   (int)($review['needs_review']
+                                      ?? ($review['confidence'] ?? 0) >= 0.4
+                                      && ($review['reason'] ?? 'none') !== 'none'), SQLITE3_INTEGER);
+    $stmt->bindValue(':notes',  substr($raw['SessionNotes']          ?? '', 0, 2000), SQLITE3_TEXT);
+    $stmt->bindValue(':school', substr($raw['SchoolworkDescription'] ?? '', 0, 500),  SQLITE3_TEXT);
+    $stmt->bindValue(':just',   $review['justification'] ?? '',       SQLITE3_TEXT);
+    $stmt->execute();
+}
+
+function db_log(string $level, string $msg): void {
+    $db = db_open();
+    if (!$db) return;
+    $stmt = $db->prepare('INSERT INTO log_lines (run_id, ts, level, msg) VALUES (:r, :t, :l, :m)');
+    $stmt->bindValue(':r', $GLOBALS['_run_id'], SQLITE3_INTEGER);
+    $stmt->bindValue(':t', time(),              SQLITE3_INTEGER);
+    $stmt->bindValue(':l', $level,              SQLITE3_TEXT);
+    $stmt->bindValue(':m', $msg,                SQLITE3_TEXT);
+    $stmt->execute();
+}
+
 function log_msg(string $level, string $msg): void {
     $line = '[' . date('Y-m-d H:i:s') . '] [' . $level . '] ' . $msg . PHP_EOL;
     file_put_contents(LOG_FILE, $line, FILE_APPEND | LOCK_EX);
     echo $line;
+    db_log($level, $msg);   // mirror to SQLite
 }
 
 function log_info(string $msg):  void { log_msg('INFO',  $msg); }
@@ -74,6 +221,7 @@ $cfg = [
     'smtp_pass'         => $_ENV['SMTP_PASS']           ?? '',
     'min_confidence'    => (float)($_ENV['MIN_CONFIDENCE'] ?? 0.4),
     'batch_size'        => (int)($_ENV['BATCH_SIZE']    ?? 50),
+    'log_query_key'     => $_ENV['LOG_QUERY_KEY']       ?? '',
 ];
 
 foreach (['radius_username', 'radius_password', 'openrouter_key'] as $req) {
@@ -423,8 +571,10 @@ function call_openrouter(string $api_key, string $model, string $system_prompt, 
         throw new RuntimeException("Unexpected JSON shape (no 'reviews' key, not bare array). Content: " . substr($content, 0, 400));
     }
 
-    // Usage stats for logging
     $usage = $data['usage'] ?? [];
+    $GLOBALS['_usage']['input_tokens']  += (int)($usage['prompt_tokens']     ?? 0);
+    $GLOBALS['_usage']['output_tokens'] += (int)($usage['completion_tokens'] ?? 0);
+    $GLOBALS['_usage']['cost_usd']      += (float)($usage['cost']            ?? 0);
     log_info(sprintf(
         'OpenRouter usage — model: %s, input: %d tokens, output: %d tokens, cost: $%.6f',
         $model,
@@ -766,8 +916,10 @@ function load_system_prompt(): string {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 $start_time = microtime(true);
+$mode = PROBE_MODE ? 'probe' : (DEBUG_MODE ? 'debug' : 'cron');
+db_start_run($mode);
 log_info('=== Session Notes Daily Check starting ===');
-log_info('Date: ' . date('Y-m-d') . ' | Model: ' . $cfg['openrouter_model']);
+log_info('Date: ' . date('Y-m-d') . ' | Model: ' . $cfg['openrouter_model'] . ' | Mode: ' . $mode);
 
 try {
     // 1. Login to Radius
@@ -841,6 +993,14 @@ try {
 
     log_info('Review complete — ' . count($all_reviews) . ' total, ' . count($flagged) . ' flagged');
 
+    // Write all reviews to SQLite
+    $n_failed = 0;
+    foreach ($all_reviews as $review) {
+        $raw = $review['raw_data'] ?? [];
+        db_insert_review($review, $raw);
+        if (($review['reason'] ?? '') === 'api_failure') $n_failed++;
+    }
+
     // 7. Build and send email
     $date_str = date('l, F j');  // e.g. "Wednesday, May 21"
     $n_flag   = count($flagged);
@@ -854,6 +1014,9 @@ try {
         log_info('DEBUG MODE: skipping email send. Review results above.');
         log_info("Would send: $subject");
         $elapsed = round(microtime(true) - $start_time, 1);
+        db_finish_run(['n_sessions' => count($all_reviews), 'n_flagged' => count($flagged),
+                       'n_failed' => $n_failed, 'model' => $cfg['openrouter_model'],
+                       'elapsed_s' => $elapsed]);
         log_info("Done in {$elapsed}s.");
         exit(0);
     }
@@ -873,11 +1036,25 @@ try {
     );
 
     $elapsed = round(microtime(true) - $start_time, 1);
+    db_finish_run([
+        'n_sessions'    => count($all_reviews),
+        'n_flagged'     => count($flagged),
+        'n_failed'      => $n_failed,
+        'model'         => $cfg['openrouter_model'],
+        'cost_usd'      => $GLOBALS['_usage']['cost_usd'],
+        'input_tokens'  => $GLOBALS['_usage']['input_tokens'],
+        'output_tokens' => $GLOBALS['_usage']['output_tokens'],
+        'elapsed_s'     => $elapsed,
+    ]);
     log_info("Done in {$elapsed}s. Sent: " . ($sent ? 'yes' : 'no'));
 
 } catch (Exception $e) {
     log_error('Fatal: ' . $e->getMessage());
     log_error($e->getTraceAsString());
+
+    $elapsed = round(microtime(true) - $start_time, 1);
+    db_finish_run(['elapsed_s' => $elapsed, 'error' => $e->getMessage(),
+                   'model' => $cfg['openrouter_model'] ?? '']);
 
     // Send error notification
     $err_subject = 'Session Notes Check FAILED — ' . date('Y-m-d');
