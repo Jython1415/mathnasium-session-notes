@@ -96,7 +96,7 @@ $op = $_GET['op'] ?? $_POST['op'] ?? 'status';
 // ── status ───────────────────────────────────────────────────────────────────
 if ($op === 'status') {
     $runs = db_query('SELECT id, date, mode, n_sessions, n_flagged, n_failed,
-                             model, cost_usd, elapsed_s, error
+                             model, prompt_hash, cost_usd, elapsed_s, error
                       FROM runs ORDER BY id DESC LIMIT 5');
 
     $db_size = file_exists(DB_PATH) ? round(filesize(DB_PATH) / 1024) . 'K' : 'none';
@@ -105,27 +105,74 @@ if ($op === 'status') {
     $total_reviews = db_query('SELECT COUNT(*) AS n FROM reviews')[0]['n'] ?? 0;
     $total_cost    = db_query('SELECT ROUND(SUM(cost_usd),6) AS c FROM runs')[0]['c'] ?? 0;
 
-    // Git status
+    // ── Health synthesis ──────────────────────────────────────────────────────
+    // Longest normal gap: Thursday 7:20 PM → Saturday 2:20 PM ≈ 43h.
+    // warning if no successful cron run in >50h; critical if >90h.
+    $last_cron = db_query(
+        "SELECT ts, error, n_failed FROM runs WHERE mode='cron' ORDER BY id DESC LIMIT 1"
+    )[0] ?? null;
+
+    $hours_since = $last_cron ? round((time() - $last_cron['ts']) / 3600, 1) : null;
+    $health_reasons = [];
+
+    if (!$last_cron) {
+        $health = 'warning';
+        $health_reasons[] = 'no cron runs recorded yet';
+    } elseif ($hours_since > 90) {
+        $health = 'critical';
+        $health_reasons[] = "last cron run was {$hours_since}h ago (>90h threshold)";
+    } elseif ($last_cron['error']) {
+        $health = 'warning';
+        $health_reasons[] = 'last cron run ended with error: ' . $last_cron['error'];
+    } elseif ($last_cron['n_failed'] > 0) {
+        $health = 'warning';
+        $health_reasons[] = "last cron run had {$last_cron['n_failed']} api_failure(s)";
+    } elseif ($hours_since > 50) {
+        $health = 'warning';
+        $health_reasons[] = "last cron run was {$hours_since}h ago (>50h)";
+    } else {
+        $health = 'ok';
+    }
+
+    // ── Prompt sync check ─────────────────────────────────────────────────────
+    $current_prompt_hash = file_exists(CHECKER_DIR . '/review_prompt.txt')
+        ? substr(md5_file(CHECKER_DIR . '/review_prompt.txt'), 0, 8)
+        : 'missing';
+    $last_run_prompt_hash = $runs[0]['prompt_hash'] ?? null;
+    $prompt_in_sync = !$last_run_prompt_hash || $last_run_prompt_hash === $current_prompt_hash;
+
+    // ── Git status ────────────────────────────────────────────────────────────
     $git_log = can_exec()
         ? trim(run_shell('git -C ' . REPO_DIR . ' log --oneline -3')['output'])
         : '(shell exec disabled)';
 
-    // Env summary (no secrets)
-    $model    = getenv('OPENROUTER_MODEL') ?: '?';
-    $batch    = getenv('BATCH_SIZE') ?: '?';
-    $conf     = getenv('MIN_CONFIDENCE') ?: '?';
+    $model   = getenv('OPENROUTER_MODEL') ?: '?';
+    $batch   = getenv('BATCH_SIZE') ?: '?';
+    $conf    = getenv('MIN_CONFIDENCE') ?: '?';
+    $retain  = getenv('RETAIN_DAYS') ?: '90';
 
     respond([
-        'ok'    => true,
-        'op'    => 'status',
-        'runs'  => $runs,
-        'stats' => [
-            'total_runs'    => $total_runs,
-            'total_reviews' => $total_reviews,
-            'total_cost_usd'=> $total_cost,
-            'db_size'       => $db_size,
+        'ok'     => true,
+        'op'     => 'status',
+        'health' => [
+            'status'          => $health,
+            'reasons'         => $health_reasons,
+            'hours_since_run' => $hours_since,
         ],
-        'config' => ['model' => $model, 'batch_size' => $batch, 'min_confidence' => $conf],
+        'prompt' => [
+            'current_hash'    => $current_prompt_hash,
+            'last_run_hash'   => $last_run_prompt_hash,
+            'in_sync'         => $prompt_in_sync,
+        ],
+        'runs'   => $runs,
+        'stats'  => [
+            'total_runs'     => $total_runs,
+            'total_reviews'  => $total_reviews,
+            'total_cost_usd' => $total_cost,
+            'db_size'        => $db_size,
+            'retain_days'    => (int)$retain,
+        ],
+        'config'     => ['model' => $model, 'batch_size' => $batch, 'min_confidence' => $conf],
         'git_recent' => $git_log,
         'shell_exec' => can_exec(),
         'php_bin'    => PHP_BIN,
@@ -246,7 +293,67 @@ if ($op === 'full-run') {
     ]);
 }
 
+// ── inspect ──────────────────────────────────────────────────────────────────
+// Surface log file contents without SSH. Hardcoded resource list — no path traversal.
+if ($op === 'inspect') {
+    $resource = $_GET['resource'] ?? $_POST['resource'] ?? '';
+    $tail     = min((int)($_GET['lines'] ?? 100), 500);
+
+    $resources = [
+        'daily-log' => CHECKER_DIR . '/logs/daily_check.log',
+        'cron-log'  => CHECKER_DIR . '/logs/cron.log',
+        'env-keys'  => null,   // special: returns .env key names only (no values)
+        'db-schema' => null,   // special: returns SQLite schema
+        'prompt'    => CHECKER_DIR . '/review_prompt.txt',
+    ];
+
+    if (!$resource) {
+        respond(['ok' => true, 'op' => 'inspect',
+            'available' => array_keys($resources),
+            'usage' => '?op=inspect&resource=<name>&lines=<n>']);
+    }
+
+    if (!array_key_exists($resource, $resources)) {
+        respond(['ok' => false, 'error' => "unknown resource: $resource",
+            'available' => array_keys($resources)]);
+    }
+
+    // Special resources
+    if ($resource === 'env-keys') {
+        $keys = [];
+        foreach (file(ENV_PATH, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            if (str_starts_with(trim($line), '#') || !str_contains($line, '=')) continue;
+            $keys[] = explode('=', $line, 2)[0];
+        }
+        respond(['ok' => true, 'op' => 'inspect', 'resource' => 'env-keys', 'keys' => $keys]);
+    }
+
+    if ($resource === 'db-schema') {
+        $schema = db_query("SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name");
+        respond(['ok' => true, 'op' => 'inspect', 'resource' => 'db-schema', 'tables' => $schema]);
+    }
+
+    $path = $resources[$resource];
+    if (!file_exists($path)) {
+        respond(['ok' => false, 'error' => "resource not found: $resource (path: $path)"]);
+    }
+
+    // Tail the file
+    $lines_all  = file($path, FILE_IGNORE_NEW_LINES) ?: [];
+    $total_lines = count($lines_all);
+    $lines_out  = array_slice($lines_all, -$tail);
+
+    respond([
+        'ok'          => true,
+        'op'          => 'inspect',
+        'resource'    => $resource,
+        'total_lines' => $total_lines,
+        'returned'    => count($lines_out),
+        'lines'       => $lines_out,
+    ]);
+}
+
 // ── unknown op ───────────────────────────────────────────────────────────────
 http_response_code(400);
 respond(['ok' => false, 'error' => "unknown op: $op",
-    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run', 'full-run']]);
+    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run', 'full-run', 'inspect']]);
