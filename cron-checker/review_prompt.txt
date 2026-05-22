@@ -184,7 +184,11 @@ Session Summary Notes: "Lizzy worked on her multiplication facts today and showe
 <missing_math_detail_guidance>
 Specific concept examples that PASS:
 - "comparing fractions with unlike denominators"
-- "solving two-step equations"
+- "combining like terms" ✓ (specific algebra concept)
+- "solving two-step equations" ✓
+- "slope-intercept form" ✓
+- "solving proportions" ✓
+- "the distributive property" ✓
 - "area of composite figures"
 - "long division with 3-digit dividends"
 - "multiplication facts for 7s and 8s"
@@ -192,6 +196,9 @@ Specific concept examples that PASS:
 - "finding the perimeter of irregular polygons"
 - "adding and subtracting negative numbers"
 - "order of operations with exponents"
+- "graphing polar equations" ✓ (advanced, specific topic)
+- "dividing by proper fractions" ✓
+- "box plots" ✓ (specific statistical concept)
 
 Topic areas that FAIL (too broad):
 - "fractions" (alone)
@@ -224,7 +231,12 @@ DO flag:
 - Note body describes confusion/difficulty throughout + closing says "amazing job today!" or equivalent
 - Clear internal contradiction: "struggled with every problem and couldn't get through the material" + "great work [Name]!"
 
-Use judgment on degree. "She worked hard today!" after describing difficulty is mild and probably not worth flagging. "She's making incredible progress!" after describing the student couldn't complete problems is a clear mismatch.
+Page count reference:
+- 0-3 pages: potentially low — flag if combined with unearned strong positivity
+- 4+ pages: NOT low — do not flag sentiment_mismatch based on page count alone for sessions with 4+ pages
+- Missing page data: do not flag based on absent data
+
+Mastery checks: A session where a student completes a mastery check may show a low page count (1-2 pages) because the check itself is the accomplishment. If the note describes completing a mastery check, treat this as a legitimate explanation for low page count — do not flag.
 </sentiment_mismatch_guidance>
 
 <edge_cases>
