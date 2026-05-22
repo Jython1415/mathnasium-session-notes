@@ -25,6 +25,7 @@
 define('SCRIPT_DIR', __DIR__);
 define('LOG_FILE',   SCRIPT_DIR . '/logs/daily_check.log');
 define('PROBE_MODE', in_array('--probe', $argv ?? []));
+define('DEBUG_MODE', in_array('--debug', $argv ?? []));
 
 // Ensure log directory exists
 if (!is_dir(SCRIPT_DIR . '/logs')) {
@@ -120,11 +121,12 @@ class HttpClient {
         return $this->exec($url);
     }
 
-    public function post_json(string $url, array $data, array $headers = []): array {
+    public function post_json(string $url, array $data, array $headers = [], int $timeout = 30): array {
         $body = json_encode($data);
         curl_setopt($this->ch, CURLOPT_POST, true);
         curl_setopt($this->ch, CURLOPT_URL, $url);
         curl_setopt($this->ch, CURLOPT_POSTFIELDS, $body);
+        curl_setopt($this->ch, CURLOPT_TIMEOUT, $timeout);
         curl_setopt($this->ch, CURLOPT_HTTPHEADER, array_merge(
             ['Content-Type: application/json', 'Content-Length: ' . strlen($body)],
             $headers
@@ -361,15 +363,19 @@ function assign_ids(array $rows): array {
 
 function call_openrouter(string $api_key, string $model, string $system_prompt, string $user_content): array {
     $http = new HttpClient();
+
+    // System prompt goes in the messages array (standard OpenAI-compatible format).
+    // Top-level "system" is Anthropic-specific and is silently dropped by some providers.
     $body = [
         'model'      => $model,
         'max_tokens' => 16000,
         'messages'   => [
-            ['role' => 'user', 'content' => $user_content],
+            ['role' => 'system', 'content' => $system_prompt],
+            ['role' => 'user',   'content' => $user_content],
         ],
-        'system'     => $system_prompt,
     ];
 
+    // 120s timeout: large system prompt + 50 sessions can take 30-60s for inference
     $resp = $http->post_json(
         'https://openrouter.ai/api/v1/chat/completions',
         $body,
@@ -377,36 +383,57 @@ function call_openrouter(string $api_key, string $model, string $system_prompt, 
             'Authorization: Bearer ' . $api_key,
             'HTTP-Referer: https://mathsense.com',
             'X-Title: Mathnasium Session Notes Checker',
-        ]
+        ],
+        120
     );
 
     if ($resp['status'] !== 200) {
-        throw new RuntimeException("OpenRouter error HTTP {$resp['status']}: " . substr($resp['body'], 0, 500));
+        throw new RuntimeException("OpenRouter HTTP {$resp['status']}: " . substr($resp['body'], 0, 800));
     }
 
     $data = json_decode($resp['body'], true);
+    if ($data === null) {
+        throw new RuntimeException("OpenRouter response not valid JSON: " . substr($resp['body'], 0, 400));
+    }
+
     $content = $data['choices'][0]['message']['content'] ?? '';
 
-    // Strip markdown fences if present
-    $content = preg_replace('/^```json\s*/m', '', $content);
+    if (DEBUG_MODE) {
+        log_info('RAW API RESPONSE: ' . substr($resp['body'], 0, 2000));
+        log_info('RAW CONTENT: ' . substr($content, 0, 1000));
+    }
+
+    // Strip all markdown fence variants
+    $content = preg_replace('/^```[a-z]*\s*/m', '', $content);
     $content = preg_replace('/^```\s*$/m', '', $content);
     $content = trim($content);
 
     $parsed = json_decode($content, true);
-    if ($parsed === null || !isset($parsed['reviews'])) {
-        throw new RuntimeException("Invalid JSON from model. First 500 chars: " . substr($content, 0, 500));
+
+    // Handle both {"reviews":[...]} and bare [...] array responses
+    if ($parsed === null) {
+        throw new RuntimeException("Model returned non-JSON. Content: " . substr($content, 0, 600));
+    }
+    if (is_array($parsed) && isset($parsed[0])) {
+        // Bare array — wrap it
+        $reviews = $parsed;
+    } elseif (isset($parsed['reviews'])) {
+        $reviews = $parsed['reviews'];
+    } else {
+        throw new RuntimeException("Unexpected JSON shape (no 'reviews' key, not bare array). Content: " . substr($content, 0, 400));
     }
 
     // Usage stats for logging
     $usage = $data['usage'] ?? [];
     log_info(sprintf(
-        'OpenRouter usage — model: %s, input: %d tokens, output: %d tokens',
+        'OpenRouter usage — model: %s, input: %d tokens, output: %d tokens, cost: $%.6f',
         $model,
         $usage['prompt_tokens'] ?? 0,
-        $usage['completion_tokens'] ?? 0
+        $usage['completion_tokens'] ?? 0,
+        $usage['cost'] ?? 0
     ));
 
-    return $parsed['reviews'];
+    return $reviews;
 }
 
 // ─── Batch processing ─────────────────────────────────────────────────────────
@@ -786,6 +813,12 @@ try {
     $enriched = assign_ids($raw_rows);
     log_info('Assigned IDs to ' . count($enriched) . ' records');
 
+    // Debug mode: truncate to 3 records to test the API call cheaply
+    if (DEBUG_MODE) {
+        $enriched = array_slice($enriched, 0, 3);
+        log_info('DEBUG MODE: truncated to ' . count($enriched) . ' records');
+    }
+
     // 4. Load system prompt
     $system_prompt = load_system_prompt();
     log_info('System prompt loaded (' . strlen($system_prompt) . ' chars)');
@@ -816,6 +849,14 @@ try {
         : "Session Notes — All clear ($date_str)";
 
     $html = build_email_html($flagged, $all_reviews, $date_str, $cfg['openrouter_model']);
+
+    if (DEBUG_MODE) {
+        log_info('DEBUG MODE: skipping email send. Review results above.');
+        log_info("Would send: $subject");
+        $elapsed = round(microtime(true) - $start_time, 1);
+        log_info("Done in {$elapsed}s.");
+        exit(0);
+    }
 
     $sent = send_email(
         $cfg['to_email'],
