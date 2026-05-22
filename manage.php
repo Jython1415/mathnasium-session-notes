@@ -268,6 +268,36 @@ if ($op === 'debug-run') {
     ]);
 }
 
+// ── rerun ─────────────────────────────────────────────────────────────────────
+if ($op === 'rerun') {
+    if (!can_exec()) {
+        respond(['ok' => false, 'op' => 'rerun',
+            'error' => 'shell_exec disabled']);
+    }
+    $date = $_GET['date'] ?? date('Y-m-d', strtotime('yesterday'));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        respond(['ok' => false, 'op' => 'rerun',
+            'error' => "date must be YYYY-MM-DD, got: $date",
+            'example' => '?op=rerun&date=2026-05-21']);
+    }
+    $script  = CHECKER_DIR . '/daily_check.php';
+    $log_out = CHECKER_DIR . '/logs/cron.log';
+    $cmd = 'nohup ' . PHP_BIN . ' ' . escapeshellarg($script)
+         . ' --date=' . escapeshellarg($date)
+         . ' >> ' . escapeshellarg($log_out) . ' 2>&1 & echo $!';
+    $pid = trim(shell_exec($cmd) ?: '');
+    $run_count_before = db_query('SELECT COUNT(*) AS n FROM runs')[0]['n'] ?? 0;
+    respond([
+        'ok'               => true,
+        'op'               => 'rerun',
+        'date'             => $date,
+        'pid'              => $pid,
+        'run_count_before' => $run_count_before,
+        'note'             => "Rerunning for $date in background. Email subject will be prefixed [RERUN $date]. "
+                            . "Poll ?op=status until total_runs > $run_count_before.",
+    ]);
+}
+
 // ── full-run ─────────────────────────────────────────────────────────────────
 if ($op === 'full-run') {
     if (!can_exec()) {
@@ -360,4 +390,4 @@ if ($op === 'inspect') {
 // ── unknown op ───────────────────────────────────────────────────────────────
 http_response_code(400);
 respond(['ok' => false, 'error' => "unknown op: $op",
-    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run', 'full-run', 'inspect']]);
+    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run', 'rerun', 'full-run', 'inspect']]);
