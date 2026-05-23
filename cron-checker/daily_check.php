@@ -91,6 +91,7 @@ function db_open(): ?SQLite3 {
                 instructor    TEXT,
                 session_date  TEXT,
                 issue         TEXT,
+                reasons       TEXT,
                 confidence    REAL    DEFAULT 0,
                 flagged       INTEGER DEFAULT 0,
                 prompt_hash   TEXT,
@@ -99,8 +100,9 @@ function db_open(): ?SQLite3 {
                 justification TEXT
             )
         ');
-        // Migrate: add prompt_hash if missing (idempotent)
+        // Idempotent migrations
         try { $db->exec('ALTER TABLE reviews ADD COLUMN prompt_hash TEXT'); } catch (Exception $e) {}
+        try { $db->exec('ALTER TABLE reviews ADD COLUMN reasons TEXT'); }    catch (Exception $e) {}
         $db->exec('CREATE INDEX IF NOT EXISTS idx_reviews_run ON reviews(run_id)');
         $db->exec('
             CREATE TABLE IF NOT EXISTS log_lines (
@@ -185,28 +187,41 @@ function db_insert_review(array $review, array $raw): void {
     $db = db_open();
     $rid = $GLOBALS['_run_id'];
     if (!$db || !$rid) return;
+
+    // Support both new format (reasons array) and old format (reason string)
+    $reasons_arr = $review['reasons'] ?? [$review['reason'] ?? 'none'];
+    if (!is_array($reasons_arr)) $reasons_arr = [$reasons_arr];
+    $reasons_arr = array_values(array_filter($reasons_arr, fn($r) => is_string($r) && $r !== ''));
+    if (empty($reasons_arr)) $reasons_arr = ['none'];
+
+    $primary_issue  = $reasons_arr[0];
+    $reasons_json   = json_encode($reasons_arr);
+    $non_none       = array_filter($reasons_arr, fn($r) => $r !== 'none');
+    $is_flagged     = (float)($review['confidence'] ?? 0) >= 0.4 && !empty($non_none);
+
     $stmt = $db->prepare('
         INSERT INTO reviews
             (run_id, unique_id, student_name, instructor, session_date,
-             issue, confidence, flagged, prompt_hash, session_notes, schoolwork, justification)
+             issue, reasons, confidence, flagged, prompt_hash,
+             session_notes, schoolwork, justification)
         VALUES
             (:run, :uid, :name, :instr, :date,
-             :issue, :conf, :flag, :phash, :notes, :school, :just)
+             :issue, :reasons, :conf, :flag, :phash,
+             :notes, :school, :just)
     ');
-    $stmt->bindValue(':run',    $rid,                                 SQLITE3_INTEGER);
-    $stmt->bindValue(':uid',    $review['unique_id']     ?? '',       SQLITE3_TEXT);
-    $stmt->bindValue(':name',   $review['student_name']  ?? '',       SQLITE3_TEXT);
-    $stmt->bindValue(':instr',  $review['instructor']    ?? '',       SQLITE3_TEXT);
-    $stmt->bindValue(':date',   $raw['AttendanceDateStr'] ?? '',      SQLITE3_TEXT);
-    $stmt->bindValue(':issue',  $review['reason']        ?? '',       SQLITE3_TEXT);
-    $stmt->bindValue(':conf',   (float)($review['confidence'] ?? 0), SQLITE3_FLOAT);
-    $stmt->bindValue(':flag',   (int)($review['needs_review']
-                                      ?? ($review['confidence'] ?? 0) >= 0.4
-                                      && ($review['reason'] ?? 'none') !== 'none'), SQLITE3_INTEGER);
-    $stmt->bindValue(':phash',  compute_prompt_hash(),                SQLITE3_TEXT);
-    $stmt->bindValue(':notes',  substr($raw['SessionNotes']          ?? '', 0, 2000), SQLITE3_TEXT);
-    $stmt->bindValue(':school', substr($raw['SchoolworkDescription'] ?? '', 0, 500),  SQLITE3_TEXT);
-    $stmt->bindValue(':just',   $review['justification'] ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':run',     $rid,                                SQLITE3_INTEGER);
+    $stmt->bindValue(':uid',     $review['unique_id']    ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':name',    $review['student_name'] ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':instr',   $review['instructor']   ?? '',       SQLITE3_TEXT);
+    $stmt->bindValue(':date',    $raw['AttendanceDateStr'] ?? '',     SQLITE3_TEXT);
+    $stmt->bindValue(':issue',   $primary_issue,                      SQLITE3_TEXT);
+    $stmt->bindValue(':reasons', $reasons_json,                       SQLITE3_TEXT);
+    $stmt->bindValue(':conf',    (float)($review['confidence'] ?? 0), SQLITE3_FLOAT);
+    $stmt->bindValue(':flag',    (int)$is_flagged,                    SQLITE3_INTEGER);
+    $stmt->bindValue(':phash',   compute_prompt_hash(),               SQLITE3_TEXT);
+    $stmt->bindValue(':notes',   substr($raw['SessionNotes']          ?? '', 0, 2000), SQLITE3_TEXT);
+    $stmt->bindValue(':school',  substr($raw['SchoolworkDescription'] ?? '', 0, 500),  SQLITE3_TEXT);
+    $stmt->bindValue(':just',    $review['justification'] ?? '',      SQLITE3_TEXT);
     $stmt->execute();
 }
 
@@ -700,6 +715,7 @@ function process_in_batches(array $enriched_rows, string $api_key, string $model
                             'instructor'    => $r['data']['InstructorsExport'] ?? '',
                             'confidence'    => 1.0,
                             'needs_review'  => true,
+                            'reasons'       => ['api_failure'],
                             'reason'        => 'api_failure',
                             'justification' => 'AI review failed — requires manual inspection.',
                             'original_idx'  => $r['original_idx'],
@@ -729,6 +745,8 @@ function build_email_html(array $flagged, array $all_reviews, string $date_str, 
     $reason_labels = [
         'language_issues'     => 'Language Issues',
         'missing_summary'     => 'Missing Summary',
+        'missing_math_detail' => 'Missing Math Detail',
+        'sentiment_mismatch'  => 'Sentiment Mismatch',
         'schoolwork_not_empty'=> 'Content in Schoolwork',
         'guardian_in_internal'=> 'Guardian Content Misplaced',
         'name_mismatch'       => 'Name Mismatch',
@@ -740,9 +758,9 @@ function build_email_html(array $flagged, array $all_reviews, string $date_str, 
     ];
 
     $confidence_color = function(float $c): string {
-        if ($c >= 0.7) return '#991b1b';  // red — high
-        if ($c >= 0.4) return '#ea580c';  // orange — medium
-        return '#65a30d';                  // green — low
+        if ($c >= 0.7) return '#991b1b';
+        if ($c >= 0.4) return '#ea580c';
+        return '#65a30d';
     };
 
     // Sort flagged: high confidence first
@@ -758,10 +776,20 @@ function build_email_html(array $flagged, array $all_reviews, string $date_str, 
             $conf  = (float)($r['confidence'] ?? 0);
             $color = $confidence_color($conf);
             $pct   = round($conf * 100);
-            $label = $reason_labels[$r['reason'] ?? ''] ?? ($r['reason'] ?? '');
             $name  = htmlspecialchars($r['student_name'] ?? 'Unknown');
             $instr = htmlspecialchars($r['instructor']   ?? '');
             $just  = htmlspecialchars($r['justification'] ?? '');
+
+            // Build badges — support both reasons array (new) and reason string (old)
+            $reasons_arr = $r['reasons'] ?? [$r['reason'] ?? 'other'];
+            if (!is_array($reasons_arr)) $reasons_arr = [$reasons_arr];
+            $reasons_arr = array_filter($reasons_arr, fn($x) => $x !== 'none');
+            $badges_html = '';
+            foreach ($reasons_arr as $rsn) {
+                $lbl = $reason_labels[$rsn] ?? $rsn;
+                $badges_html .= "<span style='display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;"
+                              . "font-weight:600;background:{$color}1a;color:{$color};margin-right:4px'>{$lbl}</span>";
+            }
 
             // Show the actual session notes for context — no arbitrary truncation.
             // Safety cap at 1500 chars with ellipsis in case of genuinely abnormal data.
@@ -781,7 +809,7 @@ function build_email_html(array $flagged, array $all_reviews, string $date_str, 
                 <div style='font-size:11px;color:#9ca3af;margin-top:2px'>{$date}</div>
               </td>
               <td style='padding:12px 8px;vertical-align:top'>
-                <span style='display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;background:{$color}1a;color:{$color}'>{$label}</span>
+                {$badges_html}
               </td>
               <td style='padding:12px 8px;vertical-align:top;font-size:12px;color:{$color};font-weight:700'>{$pct}%</td>
               <td style='padding:12px 8px;vertical-align:top;font-size:13px;color:#374151'>
@@ -1054,11 +1082,13 @@ try {
     );
 
     // 6. Filter to flagged items
-    $flagged = array_values(array_filter(
-        $all_reviews,
-        fn($r) => ($r['confidence'] ?? 0) >= $cfg['min_confidence']
-                  && ($r['reason'] ?? 'none') !== 'none'
-    ));
+    $flagged = array_values(array_filter($all_reviews, function($r) use ($cfg) {
+        if (($r['confidence'] ?? 0) < $cfg['min_confidence']) return false;
+        // Support both reasons array (new) and reason string (old)
+        $reasons = $r['reasons'] ?? [$r['reason'] ?? 'none'];
+        if (!is_array($reasons)) $reasons = [$reasons];
+        return !empty(array_filter($reasons, fn($x) => $x !== 'none'));
+    }));
 
     log_info('Review complete — ' . count($all_reviews) . ' total, ' . count($flagged) . ' flagged');
 
