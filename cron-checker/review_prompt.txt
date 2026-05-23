@@ -344,6 +344,13 @@ Valid reason values: missing_math_detail, missing_summary, sentiment_mismatch, l
 
 Multiple reasons: Use when a note genuinely has distinct issues. Order by severity (policy violations first). Most notes have only one reason.
 
+Common multi-reason cases:
+- `schoolwork_not_empty` + `missing_math_detail`: Schoolwork Description has content AND the Session Summary names no specific concept — two independent violations.
+- `missing_summary` + `schoolwork_not_empty`: Session Summary is empty AND schoolwork field has content (instructor put content in the wrong field entirely).
+- `missing_math_detail` + `sentiment_mismatch`: No specific concept named AND disproportionately positive framing.
+
+Concrete example: A note where homework is described in the Schoolwork field AND the Mathnasium portion says "made good progress on it" with no concept named → return `["schoolwork_not_empty", "missing_math_detail"]`, not just one of them.
+
 FINAL CHECKLIST:
 1. Evaluate ALL rows — output count must match input count
 2. Include low-confidence (["none"]) reviews for clean sessions
