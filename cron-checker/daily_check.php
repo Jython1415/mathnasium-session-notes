@@ -596,7 +596,7 @@ function call_openrouter(string $api_key, string $model, string $system_prompt, 
         ],
     ];
 
-    // 120s timeout: large system prompt + 50 sessions can take 30-60s for inference
+    // 180s timeout: large system prompt + 50 sessions can take 90-150s for inference
     $resp = $http->post_json(
         'https://openrouter.ai/api/v1/chat/completions',
         $body,
@@ -605,7 +605,7 @@ function call_openrouter(string $api_key, string $model, string $system_prompt, 
             'HTTP-Referer: https://mathsense.com',
             'X-Title: Mathnasium Session Notes Checker',
         ],
-        120
+        180
     );
 
     if ($resp['status'] !== 200) {
