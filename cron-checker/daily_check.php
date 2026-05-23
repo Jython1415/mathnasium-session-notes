@@ -543,7 +543,6 @@ function format_row_as_markdown(array $row, string $unique_id): string {
     $lp_assignment   = $row['LPAssignment']       ?? ($row['DwpLPAssignment'] ?? '');
 
     $pages_completed = (string)($row['NumberOfPagesCompleted'] ?? ($row['PagesCompleted'] ?? ''));
-    $page_goal       = (string)($row['SessionPageGoal']        ?? ($row['PageGoal']       ?? ''));
 
     return implode("\n", [
         "--- Row ID: $unique_id ---",
@@ -553,7 +552,6 @@ function format_row_as_markdown(array $row, string $unique_id): string {
         "Session End: $end",
         "Instructors: $instructor",
         "Pages Completed: $pages_completed",
-        "Session Goal (pages): $page_goal",
         "Schoolwork Description: $schoolwork",
         "Session Summary Notes: $session_notes",
         "Student Notes: $student_notes",
