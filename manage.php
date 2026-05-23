@@ -134,6 +134,18 @@ if ($op === 'status') {
         $health = 'ok';
     }
 
+    // Stale runs: started >15 min ago, never completed (elapsed_s still 0)
+    $stale = db_query(
+        "SELECT id, mode, datetime(ts, 'unixepoch', 'localtime') AS started
+         FROM runs WHERE elapsed_s=0 AND ts < " . (time() - 900)
+    );
+    if (!empty($stale)) {
+        if ($health === 'ok') $health = 'warning';
+        foreach ($stale as $s) {
+            $health_reasons[] = "run #{$s['id']} ({$s['mode']}) started {$s['started']} — never completed (stale)";
+        }
+    }
+
     // ── Prompt sync check ─────────────────────────────────────────────────────
     $current_prompt_hash = file_exists(CHECKER_DIR . '/review_prompt.txt')
         ? substr(md5_file(CHECKER_DIR . '/review_prompt.txt'), 0, 8)
