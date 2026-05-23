@@ -232,11 +232,13 @@ DO flag:
 - Clear internal contradiction: "struggled with every problem and couldn't get through the material" + "great work [Name]!"
 
 Page count reference:
-- 0-3 pages: potentially low — flag if combined with unearned strong positivity
+- 0-3 pages: potentially low — flag if combined with unearned strong positivity and no explanation
 - 4+ pages: NOT low — do not flag sentiment_mismatch based on page count alone for sessions with 4+ pages
 - Missing page data: do not flag based on absent data
 
 Mastery checks: A session where a student completes a mastery check may show a low page count (1-2 pages) because the check itself is the accomplishment. If the note describes completing a mastery check, treat this as a legitimate explanation for low page count — do not flag.
+
+Depth explains low page count: If the note body describes a student working through a specific confusion with detailed instruction — naming the exact misunderstanding, what the instructor demonstrated, how the student responded — this depth of work explains the low page count. Do NOT flag as sentiment_mismatch even if the closing is positive. Example: 2 pages, note describes "student confused about X → I showed her Y → she grasped it and corrected her problems" — this is an excellent focused session, not a mismatch.
 </sentiment_mismatch_guidance>
 
 <edge_cases>
@@ -288,8 +290,6 @@ DO NOT include any preamble or explanation.
 Output ONLY the JSON object.
 
 CRITICAL: You MUST evaluate and return ALL rows provided in the input data.
-Include ALL reviews in your response, including those with low confidence scores.
-Every session record must have a corresponding review entry in your output.
 
 Expected structure:
 {
@@ -301,8 +301,8 @@ Expected structure:
       "instructor": "Instructor Name",
       "confidence": 0.95,
       "needs_review": true,
-      "reason": "missing_math_detail",
-      "justification": "Note contains only encouragement — no math concept named"
+      "reasons": ["missing_summary", "schoolwork_not_empty"],
+      "justification": "Session Summary Notes is empty; Schoolwork Description contains 'Box plots'"
     },
     {
       "unique_id": "d3e4f",
@@ -311,7 +311,7 @@ Expected structure:
       "instructor": "Different Instructor",
       "confidence": 0.1,
       "needs_review": false,
-      "reason": "none",
+      "reasons": ["none"],
       "justification": "Specific concept named, honest about session, appropriate framing"
     }
   ]
@@ -320,17 +320,21 @@ Expected structure:
 Field requirements:
 - unique_id: Copy exactly from the row header (e.g., "a1b2c" from "--- Row ID: a1b2c ---")
 - student_name, student_id, instructor: From session data
-- confidence: Float 0.0–1.0
-- needs_review: true if confidence >= 0.4, false otherwise
-- reason: Must be one of: missing_math_detail, missing_summary, sentiment_mismatch, language_issues, behavior_no_strategy, schoolwork_not_empty, guardian_in_internal, name_mismatch, poor_fit_suggestion, other, none
-- justification: Brief, specific — cite the phrase or data point that triggered the flag
+- confidence: Float 0.0–1.0 — certainty that the note has issues
+- needs_review: true if confidence >= 0.4 AND reasons contains at least one non-"none" value
+- reasons: Array of one or more category strings. Use ["none"] for clean sessions. Use multiple values when a note has multiple distinct issues. Do not mix "none" with other values.
+- justification: One brief explanation covering all flagged reasons. Cite specific phrases or data.
+
+Valid reason values: missing_math_detail, missing_summary, sentiment_mismatch, language_issues, behavior_no_strategy, schoolwork_not_empty, guardian_in_internal, name_mismatch, poor_fit_suggestion, other, none
+
+Multiple reasons: Use when a note genuinely has distinct issues. Order by severity (policy violations first). Most notes have only one reason.
 
 FINAL CHECKLIST:
-1. Evaluate ALL rows — output must have the same count as input
-2. Include low confidence (none) reviews for clean sessions
+1. Evaluate ALL rows — output count must match input count
+2. Include low-confidence (["none"]) reviews for clean sessions
 3. Return ONLY valid JSON — nothing before or after
 4. Keep justifications brief but specific
-5. Be consistent across the batch — similar issues get similar confidence scores
+5. Be consistent across the batch
 6. Response must be parseable by JSON.parse()
 7. Never skip rows
 8. Copy unique_id exactly from each row header
