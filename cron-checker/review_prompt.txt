@@ -40,7 +40,7 @@ missing_math_detail: Session Summary Notes contains no specific math concept. Br
 
 missing_summary: Session Summary Notes field is completely empty. This is a critical policy violation — all sessions require a guardian-facing note.
 
-sentiment_mismatch: The closing sentiment or overall tone is disproportionately positive relative to what the note actually describes. Two triggers: (1) Pages Completed is 0-3 AND the note claims "great progress," "fantastic," or similarly strong positive framing without explaining what limited the session; (2) the body of the note describes significant confusion or difficulty throughout, but the note ends with strongly positive language that doesn't reflect the described session. This is distinct from a note that describes struggle followed by genuine resolution — those are fine.
+sentiment_mismatch: The closing sentiment or overall tone is disproportionately positive relative to what the note actually describes. Two triggers: (1) Pages Completed is 0–3 AND the note has strongly positive framing ("fantastic," "incredible progress") without explaining what the session consisted of; (2) the note body describes significant errors or difficulty throughout, but ends with positive language that contradicts the described experience. Not triggered by: notes that describe struggle and then resolution (earned positivity), notes where low page count is explained by depth of work described, or notes with mild positive closings.
 
 language_issues: Language negatively labels the student's character or ability ("lazy," "difficult," "doesn't care," "refuses to try") without constructive framing. Also flag notes whose positive framing is so disconnected from any substance that they function as empty filler with no informational value.
 
@@ -179,6 +179,23 @@ Student Name: Elizabeth Park (4456)
 Session Summary Notes: "Lizzy worked on her multiplication facts today and showed real improvement!"
 → Reason: name_mismatch
 → Justification: "Lizzy" is a plausible nickname for Elizabeth — medium confidence for director to verify.
+
+Example 15 — LOW confidence (0.1) — none:
+Student Name: Alina Joseph (8190)
+Pages Completed: 5
+Session Summary Notes: "It was very nice to see Alina today! She primarily worked on combining like terms and certainly will be able to complete the mastery check next time. Alina had a good process of tagging like terms with colors, though sometimes needed a little help combining terms with negative numbers. Keep it up Alina!"
+→ Reason: none
+→ Justification: "Combining like terms" is a specific algebra concept — it passes the missing_math_detail bar. Note is honest about difficulty (negative number terms), describes student's approach (color tagging), and is forward-looking (mastery check next time). This is a well-written note.
+→ Why NOT flagged for missing_math_detail: "Combining like terms" names a specific mathematical skill. The criterion does not require specifying every subcategory of difficulty within the concept. Compare to failing examples: "worked on algebra" (topic area, too broad) vs. "combining like terms" (specific skill — passes).
+
+Example 16 — LOW confidence (0.1) — none:
+Student Name: Aria Maggio (8011)
+Pages Completed: 2
+Session Summary Notes: "...Aria struggled a little with this topic at first, she identified how to divide the composite figures into separate rectangles which was great, but was a little confused on how to find the missing dimensions from rectangles. She told me that she was guessing by just looking at the figure and then I emphasized that she should NOT be doing that. I showed her how to find the missing lengths by completing the rectangles... She grasped this concept and did a good job of correcting her problems. We will do more practice next time to help her master this. Fantastic effort today, Aria, keep it up!"
+→ Reason: none
+→ Justification: Despite 2 pages completed and a positive closing, this note is NOT a sentiment_mismatch. The note describes the exact confusion (finding missing dimensions), the instructor's strategy (completing rectangles to find missing lengths), an alternative method, and the student's genuine progress (grasped concept, corrected problems). The low page count is fully explained by the depth of instruction. The positive closing is earned. This is exactly what a good note looks like.
+→ Why NOT flagged: Depth of instruction explains the page count. Specific concept named (area of composite figures). Honest about struggle. Instructor response described. Resolution demonstrated. Positive framing reflects actual outcome.
+
 </detailed_examples>
 
 <missing_math_detail_guidance>
@@ -227,18 +244,16 @@ Do NOT flag as sentiment_mismatch:
 - Sessions where page data is missing/empty — don't flag based on absent data
 
 DO flag:
-- Page count 0-3 + "fantastic progress," "incredible session," "really excelling" with no explanation
-- Note body describes confusion/difficulty throughout + closing says "amazing job today!" or equivalent
-- Clear internal contradiction: "struggled with every problem and couldn't get through the material" + "great work [Name]!"
+- Pages 0-3 AND strongly positive closing ("fantastic," "incredible progress") with no explanation of what the session covered
+- Note body describes errors or confusion throughout AND closing sentiment contradicts this (e.g., mastery check noted as mostly wrong, closing says "great job!")
+- Clear internal contradiction within the note body
 
-Page count reference:
-- 0-3 pages: potentially low — flag if combined with unearned strong positivity and no explanation
-- 4+ pages: NOT low — do not flag sentiment_mismatch based on page count alone for sessions with 4+ pages
-- Missing page data: do not flag based on absent data
-
-Mastery checks: A session where a student completes a mastery check may show a low page count (1-2 pages) because the check itself is the accomplishment. If the note describes completing a mastery check, treat this as a legitimate explanation for low page count — do not flag.
-
-Depth explains low page count: If the note body describes a student working through a specific confusion with detailed instruction — naming the exact misunderstanding, what the instructor demonstrated, how the student responded — this depth of work explains the low page count. Do NOT flag as sentiment_mismatch even if the closing is positive. Example: 2 pages, note describes "student confused about X → I showed her Y → she grasped it and corrected her problems" — this is an excellent focused session, not a mismatch.
+DO NOT flag:
+- Pages 4+: not a low count, do not flag based on page count alone
+- Missing page data: never flag based on absent data
+- Mastery checks: completing a mastery check is an accomplishment; 1-2 pages is expected and explained
+- Depth sessions: if the note describes specific instruction (naming confusion, instructor response, student progress), this explains low page count — do not flag even with positive closing. A note that says "struggled → I showed her X → she grasped it" with a positive closing is earned positivity, not a mismatch
+- Mild positive closings after genuine difficulty: "Keep it up!" is not the same as "incredible progress!" — only flag when the positive framing strongly contradicts the substance
 </sentiment_mismatch_guidance>
 
 <edge_cases>
