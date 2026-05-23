@@ -408,11 +408,14 @@ if ($op === 'cleanup-stale') {
     $cutoff = time() - 900;
     $stale = db_query("SELECT id FROM runs WHERE elapsed_s=0 AND ts < $cutoff");
     $updated = 0;
-    if (!empty($stale) && ($db = db_open())) {
+    if (!empty($stale) && file_exists(DB_PATH)) {
+        $db = new SQLite3(DB_PATH, SQLITE3_OPEN_READWRITE);
+        $db->exec('PRAGMA busy_timeout=3000');
         foreach ($stale as $s) {
             $db->exec("UPDATE runs SET elapsed_s=-1, error='killed - process never completed' WHERE id={$s['id']}");
             $updated++;
         }
+        $db->close();
     }
     respond(['ok' => true, 'op' => 'cleanup-stale', 'updated' => $updated,
              'ids' => array_column($stale, 'id')]);
