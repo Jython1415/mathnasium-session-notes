@@ -343,6 +343,59 @@ if ($op === 'full-run') {
     ]);
 }
 
+// ── update-config ─────────────────────────────────────────────────────────────
+// Autonomously update specific .env values. Allowlisted keys only — no arbitrary writes.
+if ($op === 'update-config') {
+    $key   = $_GET['key']   ?? $_POST['key']   ?? '';
+    $value = $_GET['value'] ?? $_POST['value'] ?? '';
+
+    $allowed_keys = [
+        'OPENROUTER_MODEL'  => '/^[a-zA-Z0-9\/\-\.:_]{3,80}$/',
+        'BATCH_SIZE'        => '/^\d{1,3}$/',
+        'MIN_CONFIDENCE'    => '/^0(\.\d+)?$|^1(\.0+)?$/',
+        'RETAIN_DAYS'       => '/^\d{1,4}$/',
+        'SEND_EMPTY_REPORT' => '/^(true|false)$/',
+    ];
+
+    if (!$key || !array_key_exists($key, $allowed_keys)) {
+        respond(['ok' => false, 'op' => 'update-config',
+            'error' => "key must be one of: " . implode(', ', array_keys($allowed_keys))]);
+    }
+
+    if (!preg_match($allowed_keys[$key], $value)) {
+        respond(['ok' => false, 'op' => 'update-config',
+            'error' => "invalid value for $key: " . htmlspecialchars($value)]);
+    }
+
+    if (!file_exists(ENV_PATH)) {
+        respond(['ok' => false, 'error' => '.env file not found']);
+    }
+
+    $lines    = file(ENV_PATH, FILE_IGNORE_NEW_LINES) ?: [];
+    $old_val  = null;
+    $replaced = false;
+
+    foreach ($lines as &$line) {
+        if (str_starts_with($line, $key . '=')) {
+            $parts   = explode('=', $line, 2);
+            $old_val = $parts[1] ?? '';
+            $line    = $key . '=' . $value;
+            $replaced = true;
+            break;
+        }
+    }
+    unset($line);
+
+    if (!$replaced) {
+        $lines[] = $key . '=' . $value;
+    }
+
+    file_put_contents(ENV_PATH, implode("\n", $lines) . "\n");
+    respond(['ok' => true, 'op' => 'update-config', 'key' => $key,
+             'old_value' => $old_val, 'new_value' => $value,
+             'action' => $replaced ? 'updated' : 'added']);
+}
+
 // ── inspect ──────────────────────────────────────────────────────────────────
 // Surface log file contents without SSH. Hardcoded resource list — no path traversal.
 if ($op === 'inspect') {
@@ -425,4 +478,4 @@ if ($op === 'cleanup-stale') {
 http_response_code(400);
 respond(['ok' => false, 'error' => "unknown op: $op",
     'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run',
-                    'rerun', 'full-run', 'inspect', 'cleanup-stale']]);
+                    'rerun', 'full-run', 'inspect', 'cleanup-stale', 'update-config']]);
