@@ -28,16 +28,16 @@ define('DB_FILE',    SCRIPT_DIR . '/logs/sessions.sqlite');
 define('PROBE_MODE', in_array('--probe', $argv ?? []));
 define('DEBUG_MODE', in_array('--debug', $argv ?? []));
 
-// Parse optional --date=YYYY-MM-DD for historical reruns
-$_date_arg = null;
+// Parse optional --date=YYYY-MM-DD and --model=<slug> for reruns/testing
+$_date_arg  = null;
+$_model_arg = null;
 foreach ($argv ?? [] as $_a) {
-    if (preg_match('/^--date=(\d{4}-\d{2}-\d{2})$/', $_a, $_m)) {
-        $_date_arg = $_m[1];
-        break;
-    }
+    if (preg_match('/^--date=(\d{4}-\d{2}-\d{2})$/', $_a, $_m))  $_date_arg  = $_m[1];
+    if (preg_match('/^--model=(.+)$/', $_a, $_m))                 $_model_arg = trim($_m[1]);
 }
-define('DATE_ARG', $_date_arg);
-define('IS_RERUN', $_date_arg !== null);
+define('DATE_ARG',  $_date_arg);
+define('MODEL_ARG', $_model_arg);
+define('IS_RERUN',  $_date_arg !== null);
 
 // Ensure log directory exists
 if (!is_dir(SCRIPT_DIR . '/logs')) {
@@ -268,7 +268,7 @@ $cfg = [
     'radius_username'   => $_ENV['RADIUS_USERNAME']     ?? '',
     'radius_password'   => $_ENV['RADIUS_PASSWORD']     ?? '',
     'openrouter_key'    => $_ENV['OPENROUTER_API_KEY']  ?? '',
-    'openrouter_model'  => $_ENV['OPENROUTER_MODEL']    ?? 'openai/gpt-4o-mini',
+    'openrouter_model'  => MODEL_ARG ?: ($_ENV['OPENROUTER_MODEL'] ?? 'openai/gpt-4o-mini'),
     'to_email'          => $_ENV['TO_EMAIL']            ?? 'joshua.shew.mathnasium@gmail.com',
     'from_email'        => $_ENV['FROM_EMAIL']          ?? 'noreply@mathsense.com',
     'from_name'         => $_ENV['FROM_NAME']           ?? 'Mathnasium Fresh Pond',
