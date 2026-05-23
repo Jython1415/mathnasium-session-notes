@@ -5,6 +5,20 @@ drives the email subject line and how urgently the CD should act.
 
 ---
 
+## `missing_math_detail`
+**What it means:** Session Summary Notes names no specific math concept. Broad topic areas alone ("fractions", "algebra") are not sufficient — the note must name a specific skill.
+**Minimum bar:** "Combining like terms" ✓, "comparing fractions with unlike denominators" ✓, "area of composite figures" ✓. "Fractions" alone ✗, "multiplication" alone ✗.
+**Action:** Coach the instructor on naming specific concepts. The note doesn't need to be long — just name what was worked on.
+
+---
+
+## `sentiment_mismatch`
+**What it means:** The tone is disproportionately positive relative to what the note describes. Triggered by: (1) 0–3 pages completed AND strongly positive framing with no explanation; (2) note describes significant errors throughout but closes with strong positive language that contradicts the substance.
+**Not triggered by:** Notes where depth of work explains low page count; mastery check sessions (1–2 pages expected); notes with mild positive closings after genuine difficulty.
+**Action:** Ask the instructor to be more specific about what happened if the session was challenging, or to moderate the closing if it doesn't reflect what was described.
+
+---
+
 ## `missing_summary`
 **What it means:** Session Summary Notes is empty or near-empty.  
 **Why it matters:** This field is sent directly to guardians. An empty note means
