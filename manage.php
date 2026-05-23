@@ -294,8 +294,11 @@ if ($op === 'rerun') {
     }
     $script  = CHECKER_DIR . '/daily_check.php';
     $log_out = CHECKER_DIR . '/logs/cron.log';
+    $model_override = $_GET['model'] ?? $_POST['model'] ?? '';
+    $model_arg = $model_override ? ' --model=' . escapeshellarg($model_override) : '';
     $cmd = 'nohup ' . PHP_BIN . ' ' . escapeshellarg($script)
          . ' --date=' . escapeshellarg($date)
+         . $model_arg
          . ' >> ' . escapeshellarg($log_out) . ' 2>&1 & echo $!';
     $pid = trim(shell_exec($cmd) ?: '');
     $run_count_before = db_query('SELECT COUNT(*) AS n FROM runs')[0]['n'] ?? 0;
