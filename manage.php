@@ -294,8 +294,9 @@ if ($op === 'rerun') {
     }
     $script  = CHECKER_DIR . '/daily_check.php';
     $log_out = CHECKER_DIR . '/logs/cron.log';
-    $model_override = $_GET['model'] ?? $_POST['model'] ?? '';
-    $model_arg = $model_override ? ' --model=' . escapeshellarg($model_override) : '';
+    // Sanitize model — allow only alphanumeric, slash, dash, dot, colon, underscore
+    $model_override = preg_replace('/[^a-zA-Z0-9\/\-\.:_]/', '', $_GET['model'] ?? $_POST['model'] ?? '');
+    $model_arg = $model_override ? " --model=$model_override" : '';
     $cmd = 'nohup ' . PHP_BIN . ' ' . escapeshellarg($script)
          . ' --date=' . escapeshellarg($date)
          . $model_arg
@@ -402,7 +403,23 @@ if ($op === 'inspect') {
     ]);
 }
 
+// ── cleanup-stale ─────────────────────────────────────────────────────────────
+if ($op === 'cleanup-stale') {
+    $cutoff = time() - 900;
+    $stale = db_query("SELECT id FROM runs WHERE elapsed_s=0 AND ts < $cutoff");
+    $updated = 0;
+    if (!empty($stale) && ($db = db_open())) {
+        foreach ($stale as $s) {
+            $db->exec("UPDATE runs SET elapsed_s=-1, error='killed - process never completed' WHERE id={$s['id']}");
+            $updated++;
+        }
+    }
+    respond(['ok' => true, 'op' => 'cleanup-stale', 'updated' => $updated,
+             'ids' => array_column($stale, 'id')]);
+}
+
 // ── unknown op ───────────────────────────────────────────────────────────────
 http_response_code(400);
 respond(['ok' => false, 'error' => "unknown op: $op",
-    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run', 'rerun', 'full-run', 'inspect']]);
+    'valid_ops' => ['status', 'test-exec', 'git-pull', 'deploy', 'debug-run',
+                    'rerun', 'full-run', 'inspect', 'cleanup-stale']]);
